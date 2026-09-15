@@ -1103,6 +1103,9 @@ int ggml_cuda_moe_cache_acquire(
     bool         is_prefetch,
     bool         pin);
 
+// Records a failed prefetch acquire (returned -1) in the per-phase stats.
+void ggml_cuda_moe_cache_note_prefetch_failed(struct ggml_cuda_moe_cache * cache, bool is_decode);
+
 void ggml_cuda_moe_cache_release_slots(
     struct ggml_cuda_moe_cache * cache,
     const int * slot_ids,

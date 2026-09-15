@@ -356,6 +356,7 @@ struct moe_cache_phase_stats {
     uint64_t prefetch_hits;
     uint64_t prefetch_misses;
     uint64_t prefetch_used;
+    uint64_t prefetch_failed;
     uint64_t prefetch_evictions;
     uint64_t demand_evictions;
     uint64_t evicted_prefetched;
@@ -7674,8 +7675,13 @@ void ggml_cuda_moe_grouped_context::prefetch_legacy_siblings(
                 continue;
             }
             const void * expert_data = source_data + (size_t) expert * tensor->nb[2];
-            (void) ggml_cuda_moe_cache_acquire(
+            const int slot = ggml_cuda_moe_cache_acquire(
                 cache, expert_data, tensor->nb[2], copy_stream, is_decode, true, false);
+            if (slot < 0) {
+                // The acquire path already printed the CUDA error; count it so the
+                // phase stats show prefetch failures instead of hiding them.
+                ggml_cuda_moe_cache_note_prefetch_failed(cache, is_decode);
+            }
         }
     }
 }
@@ -11457,6 +11463,7 @@ struct ggml_cuda_moe_cache {
     std::atomic<uint64_t> phase_prefetch_hits[2];
     std::atomic<uint64_t> phase_prefetch_misses[2];
     std::atomic<uint64_t> phase_prefetch_used[2];
+    std::atomic<uint64_t> phase_prefetch_failed[2];
     std::atomic<uint64_t> phase_prefetch_evictions[2];
     std::atomic<uint64_t> phase_demand_evictions[2];
     std::atomic<uint64_t> phase_evicted_prefetched[2];
@@ -11989,6 +11996,7 @@ static ggml_cuda_moe_cache * ggml_cuda_moe_cache_init_with_pool(
         c->phase_prefetch_hits[phase].store(0, std::memory_order_relaxed);
         c->phase_prefetch_misses[phase].store(0, std::memory_order_relaxed);
         c->phase_prefetch_used[phase].store(0, std::memory_order_relaxed);
+        c->phase_prefetch_failed[phase].store(0, std::memory_order_relaxed);
         c->phase_prefetch_evictions[phase].store(0, std::memory_order_relaxed);
         c->phase_demand_evictions[phase].store(0, std::memory_order_relaxed);
         c->phase_evicted_prefetched[phase].store(0, std::memory_order_relaxed);
@@ -12478,6 +12486,14 @@ int ggml_cuda_moe_cache_acquire(
         cache->slot_pin_count[slot]++;
     }
     return slot;
+}
+
+extern "C"
+void ggml_cuda_moe_cache_note_prefetch_failed(struct ggml_cuda_moe_cache * cache, bool is_decode) {
+    if (cache == nullptr) {
+        return;
+    }
+    cache->phase_prefetch_failed[moe_cache_phase_index(is_decode)].fetch_add(1, std::memory_order_relaxed);
 }
 
 extern "C"
@@ -12996,6 +13012,7 @@ static moe_cache_phase_stats ggml_cuda_moe_cache_phase_stats(const struct ggml_c
     s.prefetch_hits = cache->phase_prefetch_hits[phase].load(std::memory_order_relaxed);
     s.prefetch_misses = cache->phase_prefetch_misses[phase].load(std::memory_order_relaxed);
     s.prefetch_used = cache->phase_prefetch_used[phase].load(std::memory_order_relaxed);
+    s.prefetch_failed = cache->phase_prefetch_failed[phase].load(std::memory_order_relaxed);
     s.prefetch_evictions = cache->phase_prefetch_evictions[phase].load(std::memory_order_relaxed);
     s.demand_evictions = cache->phase_demand_evictions[phase].load(std::memory_order_relaxed);
     s.evicted_prefetched = cache->phase_evicted_prefetched[phase].load(std::memory_order_relaxed);
@@ -13058,6 +13075,7 @@ static void ggml_cuda_moe_add_phase_stats(moe_cache_phase_stats & dst, const moe
     dst.prefetch_hits += src.prefetch_hits;
     dst.prefetch_misses += src.prefetch_misses;
     dst.prefetch_used += src.prefetch_used;
+    dst.prefetch_failed += src.prefetch_failed;
     dst.prefetch_evictions += src.prefetch_evictions;
     dst.demand_evictions += src.demand_evictions;
     dst.evicted_prefetched += src.evicted_prefetched;
@@ -13106,7 +13124,7 @@ static void ggml_cuda_moe_log_phase_stats(const char * name, const moe_cache_pha
     const double l1_hit_rate = l1_total > 0 ? 100.0 * (double) s.l1_hits / (double) l1_total : 0.0;
     const double avg_unique = s.ops > 0 ? (double) s.unique_experts / (double) s.ops : 0.0;
     GGML_LOG(
-        "moe-cache-phase: phase=%s ops=%llu staged_ops=%llu split_staged_ops=%llu overflow_ops=%llu unique_avg=%.2f unique_max=%llu ids_mib=%.2f ids_d2h_mib=%.2f ids_d2h_ms=%.3f ids_d2h_syncs=%llu ids_cache_hits=%llu acquire_ms=%.3f remap_ms=%.3f copy_wait_events=%llu copy_wait_event_ms=%.3f op_cpu_ms=%.3f l1_hits=%llu l1_misses=%llu l1_evictions=%llu l1_hit_rate=%.2f%% h2d_copies=%llu h2d_mib=%.2f h2d_enqueue_ms=%.3f prefetch_hits=%llu prefetch_misses=%llu prefetch_used=%llu prefetch_h2d_copies=%llu prefetch_h2d_mib=%.2f prefetch_h2d_enqueue_ms=%.3f upload_calls=%llu upload_mib=%.2f staging_tiles=%llu pipeline_tiles=%llu tile_wait_calls=%llu tile_wait_ms=%.3f cpu_pack_mib=%.2f cpu_pack_ms=%.3f pre_sync_calls=%llu pre_sync_ms=%.3f h2d_submit_calls=%llu h2d_submit_mib=%.2f h2d_submit_ms=%.3f post_sync_calls=%llu post_sync_ms=%.3f upload_errors=%llu\n",
+        "moe-cache-phase: phase=%s ops=%llu staged_ops=%llu split_staged_ops=%llu overflow_ops=%llu unique_avg=%.2f unique_max=%llu ids_mib=%.2f ids_d2h_mib=%.2f ids_d2h_ms=%.3f ids_d2h_syncs=%llu ids_cache_hits=%llu acquire_ms=%.3f remap_ms=%.3f copy_wait_events=%llu copy_wait_event_ms=%.3f op_cpu_ms=%.3f l1_hits=%llu l1_misses=%llu l1_evictions=%llu l1_hit_rate=%.2f%% h2d_copies=%llu h2d_mib=%.2f h2d_enqueue_ms=%.3f prefetch_hits=%llu prefetch_misses=%llu prefetch_used=%llu prefetch_failed=%llu prefetch_h2d_copies=%llu prefetch_h2d_mib=%.2f prefetch_h2d_enqueue_ms=%.3f upload_calls=%llu upload_mib=%.2f staging_tiles=%llu pipeline_tiles=%llu tile_wait_calls=%llu tile_wait_ms=%.3f cpu_pack_mib=%.2f cpu_pack_ms=%.3f pre_sync_calls=%llu pre_sync_ms=%.3f h2d_submit_calls=%llu h2d_submit_mib=%.2f h2d_submit_ms=%.3f post_sync_calls=%llu post_sync_ms=%.3f upload_errors=%llu\n",
         name,
         (unsigned long long) s.ops,
         (unsigned long long) s.staged_ops,
@@ -13134,6 +13152,7 @@ static void ggml_cuda_moe_log_phase_stats(const char * name, const moe_cache_pha
         (unsigned long long) s.prefetch_hits,
         (unsigned long long) s.prefetch_misses,
         (unsigned long long) s.prefetch_used,
+        (unsigned long long) s.prefetch_failed,
         (unsigned long long) s.prefetch_h2d_copy_count,
         (double) s.prefetch_h2d_copy_bytes / 1024.0 / 1024.0,
         (double) s.prefetch_h2d_enqueue_time_us / 1000.0,
@@ -13375,6 +13394,7 @@ void ggml_cuda_moe_cache_reset_stats(struct ggml_cuda_moe_cache * cache) {
         cache->phase_prefetch_hits[phase].store(0, std::memory_order_relaxed);
         cache->phase_prefetch_misses[phase].store(0, std::memory_order_relaxed);
         cache->phase_prefetch_used[phase].store(0, std::memory_order_relaxed);
+        cache->phase_prefetch_failed[phase].store(0, std::memory_order_relaxed);
         cache->phase_prefetch_evictions[phase].store(0, std::memory_order_relaxed);
         cache->phase_demand_evictions[phase].store(0, std::memory_order_relaxed);
         cache->phase_evicted_prefetched[phase].store(0, std::memory_order_relaxed);
