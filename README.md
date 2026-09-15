@@ -1,3 +1,12 @@
+---
+desc: Flash-Next 專家快取推論引擎（GenerelSchwerz moe-cache 分支的本地維護版）
+kind: fork
+status: active
+stack: C++/CUDA, llama.cpp
+run: 主機 A `/data/src/run-best2.sh`（見 docs/lofai/）
+risk: 上游分支實驗性強；生產前先看 docs/lofai/REVIEW-20260916.md
+---
+
 # llama.cpp
 
 ## GenerelSchwerz fork
