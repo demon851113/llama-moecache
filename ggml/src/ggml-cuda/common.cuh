@@ -1478,6 +1478,13 @@ struct ggml_backend_cuda_context {
     ggml_cuda_moe_grouped_context * moe_grouped_context = nullptr;
     std::vector<std::unique_ptr<ggml_backend_cuda_context>> moe_router_contexts;
     std::unique_ptr<ggml_cuda_moe_ids_cache_state> moe_ids_cache;
+    // moe-cache: host-mapped fault flag raised by mul_mat_q when a staging wait times out.
+    // Checked at the start of every graph compute so a stuck copy stream fails the decode
+    // instead of hanging the GPU.
+    uint32_t * moe_stage_fault_host = nullptr;
+    uint32_t * moe_stage_fault_dev = nullptr;
+    uint32_t * moe_stage_fault_device();
+    bool moe_stage_fault_take();
 
     cudaStream_t streams[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = { { nullptr } };
     cublasHandle_t cublas_handles[GGML_CUDA_MAX_DEVICES][GGML_CUDA_MAX_STREAMS] = {nullptr};
