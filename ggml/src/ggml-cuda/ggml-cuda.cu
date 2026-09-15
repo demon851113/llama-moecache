@@ -2357,6 +2357,12 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
     cuda_graphs.clear();
     delete moe_grouped_context;
 
+    if (moe_stage_fault_host != nullptr) {
+        CUDA_CHECK(cudaFreeHost(moe_stage_fault_host));
+        moe_stage_fault_host = nullptr;
+        moe_stage_fault_dev = nullptr;
+    }
+
     if (copy_event != nullptr) {
         CUDA_CHECK(cudaEventDestroy(copy_event));
     }
@@ -2376,6 +2382,32 @@ ggml_backend_cuda_context::~ggml_backend_cuda_context() {
             }
         }
     }
+}
+
+uint32_t * ggml_backend_cuda_context::moe_stage_fault_device() {
+    if (moe_stage_fault_dev == nullptr) {
+        ggml_cuda_set_device(device);
+        void * host = nullptr;
+        CUDA_CHECK(cudaHostAlloc(&host, sizeof(uint32_t), cudaHostAllocMapped));
+        moe_stage_fault_host = static_cast<uint32_t *>(host);
+        *moe_stage_fault_host = 0;
+        void * dev = nullptr;
+        CUDA_CHECK(cudaHostGetDevicePointer(&dev, host, 0));
+        moe_stage_fault_dev = static_cast<uint32_t *>(dev);
+    }
+    return moe_stage_fault_dev;
+}
+
+bool ggml_backend_cuda_context::moe_stage_fault_take() {
+    if (moe_stage_fault_host == nullptr) {
+        return false;
+    }
+    volatile uint32_t * flag = moe_stage_fault_host;
+    if (*flag == 0) {
+        return false;
+    }
+    *flag = 0;
+    return true;
 }
 
 static ggml_cuda_moe_ids_cache_state & ggml_cuda_moe_ids_cache_get(ggml_backend_cuda_context & ctx) {
@@ -4310,6 +4342,10 @@ static void ggml_backend_cuda_synchronize(ggml_backend_t backend) {
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *)backend->context;
 
     CUDA_CHECK(cudaStreamSynchronize(cuda_ctx->stream()));
+
+    if (cuda_ctx->moe_stage_fault_take()) {
+        GGML_LOG_ERROR("moe-cache: mmq staging wait timed out (copy stream never signalled ready); output of the last graph is invalid\n");
+    }
 
     GGML_UNUSED(backend);
 }
@@ -6770,6 +6806,11 @@ static bool ggml_cuda_graph_has_cached_buffer_mmid(const ggml_cgraph * cgraph) {
 
 static enum ggml_status ggml_backend_cuda_graph_compute(ggml_backend_t backend, ggml_cgraph * cgraph) {
     ggml_backend_cuda_context * cuda_ctx = (ggml_backend_cuda_context *) backend->context;
+
+    if (cuda_ctx->moe_stage_fault_take()) {
+        GGML_LOG_ERROR("moe-cache: mmq staging wait timed out in a previous graph; refusing to compute on a faulted context\n");
+        return GGML_STATUS_FAILED;
+    }
 
     const bool required_requested = cgraph != nullptr &&
         (cgraph->execution_certificate.flags & GGML_GRAPH_EXECUTION_CERTIFICATE_FLAG_REQUIRED_GROUPED) != 0;

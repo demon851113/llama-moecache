@@ -275,6 +275,7 @@ static void ggml_cuda_mul_mat_q_impl(
     args.x_channel_split = source_split;
     args.x_wait_class = source_wait_class;
     args.x_stage_ready = stage_ready;
+    args.x_stage_fault = stage_ready != nullptr ? ctx.moe_stage_fault_device() : nullptr;
     if (source_map) {
         ggml_cuda_mul_mat_q_switch_type<true>(ctx, args, stream);
     } else {
