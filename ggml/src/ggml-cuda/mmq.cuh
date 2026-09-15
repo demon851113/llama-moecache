@@ -942,6 +942,42 @@ static __device__ __forceinline__ void mul_mat_q_process_tile(
 }
 
 
+// moe-cache: bounded wait for a staging-ready flag written by the copy stream.
+// An unbounded spin here hangs the whole GPU (and takes the machine with it) if the
+// producer never signals; instead give up after MMQ_STAGE_WAIT_TIMEOUT_NS, raise the
+// host-visible fault flag and let the host fail the graph compute.
+#define MMQ_STAGE_WAIT_TIMEOUT_NS 4000000000ULL
+static __device__ __forceinline__ void mmq_wait_stage_ready(const volatile uint32_t * ready, uint32_t * fault) {
+    if (*ready != 0) {
+        return;
+    }
+#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
+    unsigned long long t0 = 0;
+    asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t0));
+    while (*ready == 0) {
+        __nanosleep(256);
+        unsigned long long t1 = 0;
+        asm volatile("mov.u64 %0, %%globaltimer;" : "=l"(t1));
+        if (t1 - t0 > MMQ_STAGE_WAIT_TIMEOUT_NS) {
+            if (fault != nullptr) {
+                atomicExch(fault, 1u);
+            }
+            break;
+        }
+    }
+#else
+    unsigned long long spins = 0;
+    while (*ready == 0) {
+        if (++spins > (1ULL << 28)) {
+            if (fault != nullptr) {
+                atomicExch(fault, 1u);
+            }
+            break;
+        }
+    }
+#endif
+}
+
 // The mul_mat_q kernel implements "stream-k" work partitioning as described in https://arxiv.org/abs/2301.03598
 
 template <ggml_type type, int J, bool fallback, bool use_x_map>
@@ -955,7 +991,7 @@ static __global__ void mul_mat_q(
         const uint3 sample_ratio, const uint3 nsamples_y, const int stride_sample_x, const int stride_sample_y, const int stride_sample_dst,
         const uint3 ntx, const char * __restrict__ x_secondary, const int32_t * __restrict__ x_channel_map,
         const int32_t x_channel_split, const int32_t * __restrict__ x_wait_class,
-        const uint32_t * __restrict__ x_stage_ready) {
+        const uint32_t * __restrict__ x_stage_ready, uint32_t * __restrict__ x_stage_fault) {
 
     // Skip unused template specializations for faster compilation:
     if (ggml_cuda_mmq_get_config(type, J, fallback).type == GGML_TYPE_COUNT) {
@@ -1054,8 +1090,7 @@ static __global__ void mul_mat_q(
                 if (wait_class != 0) {
                     if (threadIdx.x == 0 && threadIdx.y == 0) {
                         const volatile uint32_t * ready = x_stage_ready + wait_class - 1;
-                        while (*ready == 0) {
-                        }
+                        mmq_wait_stage_ready(ready, x_stage_fault);
                     }
                     __syncthreads();
                 }
@@ -1168,8 +1203,7 @@ static __global__ void mul_mat_q(
                 if (wait_class != 0) {
                     if (threadIdx.x == 0 && threadIdx.y == 0) {
                         const volatile uint32_t * ready = x_stage_ready + wait_class - 1;
-                        while (*ready == 0) {
-                        }
+                        mmq_wait_stage_ready(ready, x_stage_fault);
                     }
                     __syncthreads();
                 }
@@ -1272,8 +1306,7 @@ static __global__ void mul_mat_q(
             if (wait_class != 0) {
                 if (threadIdx.x == 0 && threadIdx.y == 0) {
                     const volatile uint32_t * ready = x_stage_ready + wait_class - 1;
-                    while (*ready == 0) {
-                    }
+                    mmq_wait_stage_ready(ready, x_stage_fault);
                 }
                 __syncthreads();
             }
@@ -1447,6 +1480,7 @@ struct mmq_args {
     int32_t x_channel_split = 0;
     const int32_t * x_wait_class = nullptr;
     const uint32_t * x_stage_ready = nullptr;
+    uint32_t * x_stage_fault = nullptr; // host-mapped flag raised when a staging wait times out
 };
 
 static size_t mmq_get_nbytes_shared(const ggml_cuda_mmq_config & config, const int cc) {
@@ -1496,7 +1530,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
              blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
              channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
              sample_ratio_fd, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-             ntx_fd, args.x_secondary, args.x_channel_map, args.x_channel_split, args.x_wait_class, args.x_stage_ready);
+             ntx_fd, args.x_secondary, args.x_channel_map, args.x_channel_split, args.x_wait_class, args.x_stage_ready, args.x_stage_fault);
         return;
     }
 
@@ -1525,7 +1559,7 @@ static void launch_mul_mat_q(ggml_backend_cuda_context & ctx, const mmq_args & a
          blocks_per_ne00_fd, args.nrows_x, args.ncols_dst, args.stride_row_x, args.ncols_y, args.nrows_dst,
          channel_ratio_fd, nchannels_y_fd, args.stride_channel_x, args.stride_channel_y, args.stride_channel_dst,
          sample_ratio_fd, nsamples_y_fd, args.stride_sample_x, args.stride_sample_y, args.stride_sample_dst,
-         ntx_fd, args.x_secondary, args.x_channel_map, args.x_channel_split, args.x_wait_class, args.x_stage_ready);
+         ntx_fd, args.x_secondary, args.x_channel_map, args.x_channel_split, args.x_wait_class, args.x_stage_ready, args.x_stage_fault);
 
     if (!fixup_needed) {
         return;
