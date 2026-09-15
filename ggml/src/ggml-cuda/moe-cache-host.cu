@@ -133,9 +133,12 @@ moe_host_allocation::moe_host_allocation(moe_host_budget * owner, size_t base_si
         return;
     }
     std::lock_guard<std::mutex> lock(owner->mutex);
-    if (pinned_size > owner->limit - owner->source_bytes - owner->staging_bytes) {
-        GGML_LOG_ERROR("moe-cache-host: staging requires %zu bytes, budget has %zu bytes free\n", pinned_size,
-            owner->limit - owner->source_bytes - owner->staging_bytes);
+    // Budget fields are size_t: compute "used" first so an over-committed budget reads as
+    // 0 bytes free instead of wrapping around to a huge number.
+    const size_t used = owner->source_bytes + owner->staging_bytes;
+    const size_t free_bytes = used < owner->limit ? owner->limit - used : 0;
+    if (pinned_size > free_bytes) {
+        GGML_LOG_ERROR("moe-cache-host: staging requires %zu bytes, budget has %zu bytes free\n", pinned_size, free_bytes);
         return;
     }
     const size_t base_pinned_size = pinned_size;
@@ -148,8 +151,11 @@ moe_host_allocation::moe_host_allocation(moe_host_budget * owner, size_t base_si
     }
     if (tile_stride != 0 && max_tiles > 1) {
         // Tile growth must leave the unallocated mandatory scratch available.
+        GGML_ASSERT(owner->staging_optional_bytes <= owner->staging_bytes);
         const size_t mandatory = std::max(owner->staging_reserved, owner->staging_bytes - owner->staging_optional_bytes + base_pinned_size);
-        const size_t available = owner->limit - owner->source_bytes - owner->staging_optional_bytes;
+        const size_t committed_optional = owner->source_bytes + owner->staging_optional_bytes;
+        GGML_ASSERT(committed_optional <= owner->limit);
+        const size_t available = owner->limit - committed_optional;
         GGML_ASSERT(mandatory <= available);
         const size_t page = moe_host_page_size();
         const size_t capacity = (base_pinned_size + (available - mandatory)) / page * page;
@@ -502,7 +508,8 @@ bool moe_host_register(moe_host_budget & owner, const std::vector<moe_host_sourc
         }
         bytes += range.end - range.begin;
     }
-    if (bytes > owner.limit - owner.staging_reserved - owner.source_bytes) {
+    const size_t reserved = owner.staging_reserved + owner.source_bytes;
+    if (reserved > owner.limit || bytes > owner.limit - reserved) {
         return decline("source_budget_exhausted");
     }
     const bool read_only = std::any_of(ranges.begin(), ranges.end(), [](const moe_host_range & range) { return range.read_only; });
