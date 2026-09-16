@@ -38,6 +38,23 @@ def probe(url):
     except Exception:
         return False
 
+def _ensure_stream_usage(path, body):
+    # llama-server 串流只在帶 stream_options.include_usage 時回 usage；
+    # hermes 主流程不帶，拿不到真實 prompt token 就會一直用粗估壓縮。這裡代它補上。
+    if not body or not path.endswith("/chat/completions"):
+        return body
+    try:
+        req = json.loads(body)
+    except ValueError:
+        return body
+    if not isinstance(req, dict) or not req.get("stream"):
+        return body
+    opts = req.get("stream_options") if isinstance(req.get("stream_options"), dict) else {}
+    if opts.get("include_usage"):
+        return body
+    req["stream_options"] = {**opts, "include_usage": True}
+    return json.dumps(req, ensure_ascii=False).encode("utf-8")
+
 def health_loop():
     while True:
         ok = probe(PRIMARY)
@@ -63,6 +80,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def _proxy(self):
         n = int(self.headers.get("Content-Length") or 0)
         body = self.rfile.read(n) if n else None
+        body = _ensure_stream_usage(self.path, body)
         if self.path == "/__failover_status":
             with _lock: st = dict(_state)
             data = json.dumps({"primary": PRIMARY, "backup": BACKUP, "primary_up": st["primary_up"], "last_check_age_s": round(time.time() - st["checked"], 1)}).encode()
