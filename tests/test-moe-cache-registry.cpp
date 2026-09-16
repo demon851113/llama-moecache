@@ -5,6 +5,9 @@
 #include "../src/llama-model.h"
 #include "../src/llama-vocab.h"
 
+#include <stdexcept>
+#include <string>
+
 void test_moe_tensor_split_rejection() {
     auto params = llama_model_default_params();
     params.split_mode = LLAMA_SPLIT_MODE_TENSOR;
