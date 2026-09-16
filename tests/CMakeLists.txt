@@ -438,6 +438,7 @@ if (GGML_CUDA AND NOT GGML_BACKEND_DL AND TARGET ggml-cuda AND (NOT WIN32 OR NOT
         test-moe-cache-mmid.cpp
         test-moe-cache-staging.cpp
         test-moe-cache-multigpu.cpp
+        test-moe-cache-mmq-wait.cpp
     )
     target_compile_features(test-moe-cache PRIVATE cxx_std_17)
     target_link_libraries(test-moe-cache PRIVATE llama ggml-cuda ggml-base CUDA::cudart)
@@ -446,6 +447,8 @@ if (GGML_CUDA AND NOT GGML_BACKEND_DL AND TARGET ggml-cuda AND (NOT WIN32 OR NOT
     add_test(NAME test-moe-cache-layer COMMAND test-moe-cache --grouped-layer-only)
     set_tests_properties(test-moe-cache-layer PROPERTIES LABELS "main")
     add_test(NAME test-moe-cache-multigpu COMMAND test-moe-cache --grouped-multigpu-only)
+    add_test(NAME test-moe-cache-mmq-wait COMMAND test-moe-cache --mmq-stage-wait-only)
+    set_tests_properties(test-moe-cache-mmq-wait PROPERTIES LABELS "main")
     set_tests_properties(test-moe-cache-multigpu PROPERTIES SKIP_RETURN_CODE 77 LABELS "main;multigpu")
     set_property(TEST test-moe-cache PROPERTY LABELS "main")
 endif()
