@@ -40,9 +40,11 @@ def sh(cmd, timeout=8):
 
 
 def add_event(kind, level, text):
+    key = re.sub(r"\d{2}:\d{2}:\d{2}[,.]\d+", "", text)
     with _lock:
-        if events and events[-1]["text"] == text and time.time() - events[-1]["ts"] < 600:
-            return
+        for e in list(events)[-8:]:
+            if re.sub(r"\d{2}:\d{2}:\d{2}[,.]\d+", "", e["text"]) == key and time.time() - e["ts"] < 3600:
+                return
         events.append({"ts": time.time(), "kind": kind, "level": level, "text": text})
     save_state()
 
