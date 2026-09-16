@@ -231,11 +231,14 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
     tile('t-ram', ramPct > .93 ? 'wn' : 'ok', f1(c.mem_used_gb), `/ ${f0(c.mem_total_gb)} G`, `llama-server RSS ${f1(d.proc && d.proc.rss_gb)} G · DIMM ${sw.hwmon && sw.hwmon.dimm && sw.hwmon.dimm.length ? Math.max(...sw.hwmon.dimm).toFixed(0) + ' °C' : '—'}`);
     tile('t-cpu', (c.load1 || 0) > 8 ? 'wn' : 'ok', f1(c.load1), `/ ${c.ncpu || '—'} 核`, `${f0(sw.hwmon && sw.hwmon.cpu_temp)} °C · 使用率 ${f1(c.util)}%`);
     // 模型三格
-    const tps = gen ? lv.tps : (d.recent && d.recent[0] ? d.recent[0].tps : null);
-    tile('t-tps', gen ? 'ac' : 'na', f1(tps), 'tok/s', gen ? `已生成 ${f0(sl.n_gen)} · 首字 ${f1(lv.ttft_s)} s` : pre ? `讀 prompt 中 ${f0(sl.prompt_processed)} / ${f0(sl.prompt_tokens)}` : `閒置 · 上一筆 ${d.recent && d.recent[0] ? hms(d.recent[0].ts) : '—'}`);
+    const ro = d.rolling || {}, lr = d.last_request || {};
+    const tps = gen ? lv.tps : lr.tps;
+    tile('t-tps', 'ac', f1(tps), 'tok/s', gen ? `生成中 · 已生成 ${f0(sl.n_gen)}` : pre ? `讀 prompt 中 ${f0(sl.prompt_processed)} / ${f0(sl.prompt_tokens)}` : `上一筆 ${lr.ts ? hms(lr.ts) : '—'} · 近 ${ro.n || 0} 筆中位 ${f1(ro.tps)}`);
     const ctxPct = sl.n_ctx ? sl.ctx_used / sl.n_ctx : 0;
-    tile('t-ctx', ctxPct > .9 ? 'wn' : 'ok', (sl.ctx_used / 1000).toFixed(1), `K / ${Math.round(sl.n_ctx / 1024)}K`, `${Math.round(ctxPct * 100)}% · 前綴快取 ${sl.prompt_tokens ? Math.round(100 * (sl.prompt_cached || 0) / sl.prompt_tokens) : 0}%`);
-    tile('t-mtp', lv.accept == null ? 'na' : lv.accept < .5 ? 'wn' : 'ok', lv.accept == null ? '—' : Math.round(lv.accept * 100), '%', `平均草稿長 ${f1(lv.mean_len)} · 每步 ${lv.mean_len ? (1 + lv.accept * 2).toFixed(2) : '—'} tok`);
+    const cachePct = (sl.state !== 'idle' && sl.prompt_tokens) ? 100 * (sl.prompt_cached || 0) / sl.prompt_tokens : (lr.prompt_total ? 100 * (lr.cached || 0) / lr.prompt_total : null);
+    tile('t-ctx', ctxPct > .9 ? 'wn' : 'ok', (sl.ctx_used / 1000).toFixed(1), `K / ${Math.round(sl.n_ctx / 1024)}K`, `${Math.round(ctxPct * 100)}% · 前綴快取 ${cachePct == null ? '—' : Math.round(cachePct) + '%'}`);
+    const acc = ro.accept ?? lv.accept;
+    tile('t-mtp', acc == null ? 'na' : acc < .5 ? 'wn' : 'ok', acc == null ? '—' : Math.round(acc * 100), '%', `近 ${ro.n || 0} 筆中位 · 本筆 ${lv.accept == null ? '—' : Math.round(lv.accept * 100) + '%'} · 草稿長 ${f1(ro.mean_len ?? lv.mean_len)}`);
 
     // 條
     const pc = g.pcie_rx_gbs || 0;
@@ -247,8 +250,8 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
     $('b-vram-l').innerHTML = segs.map(s => `<span><b style="background:${s[1]}"></b>${s[2]} ${f1(vr[s[0]])}</span>`).join('') + `<span><b style="border:1px solid var(--line2)"></b>留白 ${f1(vr.free)}</span>`;
     bar('b-ctx', ctxPct * 100, `${f0(sl.ctx_used)} / ${f0(sl.n_ctx)}`);
     const prePct = sl.prompt_tokens ? (sl.prompt_processed || 0) / sl.prompt_tokens * 100 : 0;
-    bar('b-pre', pre ? prePct : (sl.state === 'idle' ? 0 : 100), pre ? `${f0(sl.prompt_processed)} / ${f0(sl.prompt_tokens)}` : sl.state === 'idle' ? '—' : '完成');
-    bar('b-pfs', (lv.prefill_tps || 0) / 850 * 100, `${f0(lv.prefill_tps)} tok/s`);
+    bar('b-pre', pre ? prePct : (lr.prompt ? 100 : 0), pre ? `${f0(sl.prompt_processed)} / ${f0(sl.prompt_tokens)}` : lr.prompt ? `上一筆 ${f0(lr.prompt)} tok · ${f1(lr.ttft_s)} s` : '—', pre ? 'good' : 'good');
+    bar('b-pfs', (ro.prefill_tps || 0) / 850 * 100, `${f0(ro.prefill_tps)} tok/s（中位）`);
     $('m-legend').innerHTML = [`快取 ${d.cache_slots} 槽/層`, `草稿 n=${st.draft_n || '—'}`, `ub ${st.ub || '—'}`, `KV q8_0`].map(esc).map(x => `<span>${x}</span>`).join('');
 
     // 規格
@@ -274,8 +277,8 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
 
     // 快顯
     tile('q1', svcOk ? 'ok' : 'cr', svcOk ? '正常' : '異常', '', `${sw.uptime_s ? '開機 ' + dur(sw.uptime_s) + ' · ' : ''}hermes → ${route}`);
-    tile('q2', gen ? 'ac' : 'na', f1(tps), 'tok/s', gen ? `生成中 · MTP ${lv.accept == null ? '—' : Math.round(lv.accept * 100) + '%'}` : pre ? '讀 prompt 中' : '閒置');
-    tile('q3', ctxPct > .9 ? 'wn' : 'ok', (sl.ctx_used / 1000).toFixed(1), `K / ${Math.round(sl.n_ctx / 1024)}K`, `${Math.round(ctxPct * 100)}% · 首字 ${f1(lv.ttft_s)} s`);
+    tile('q2', 'ac', f1(tps), 'tok/s', gen ? `生成中 · MTP ${acc == null ? '—' : Math.round(acc * 100) + '%'}` : pre ? '讀 prompt 中' : `閒置 · 近 ${ro.n || 0} 筆中位 ${f1(ro.tps)}`);
+    tile('q3', ctxPct > .9 ? 'wn' : 'ok', (sl.ctx_used / 1000).toFixed(1), `K / ${Math.round(sl.n_ctx / 1024)}K`, `${Math.round(ctxPct * 100)}% · 首字中位 ${f1(ro.ttft_s)} s`);
     tile('q4', tcls, f0(g.temp), '°C', `${f0(g.watt)} W · VRAM ${f1(g.vram_used / 1024)} / ${f1(total)}`);
     bar('q-pcie', pc / 45 * 100, `${f1(pc)} / 45 GB/s`, pc > 40 ? 'warn' : '');
   }

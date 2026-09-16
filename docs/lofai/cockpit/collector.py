@@ -180,7 +180,7 @@ def tail_log():
     for raw in chunk.decode("utf-8", "replace").splitlines():
         m = RE_TG.search(raw)
         if m:
-            _live.update({"task": m.group(1), "n_gen": int(m.group(2)), "tg": float(m.group(4)), "tg_ts": time.time()})
+            _live.update({"task": m.group(1), "n_gen": int(m.group(2)), "tg": float(m.group(3)), "tg_3s": float(m.group(4)), "tg_ts": time.time()})
             continue
         m = RE_PROMPT.search(raw)
         if m:
@@ -234,6 +234,8 @@ def fast_loop():
         tail_log()
         svc = read_service()
         slot = slots[0] if isinstance(slots, list) and slots else {}
+        if slot.get("is_processing") and slot.get("id_task") is not None:
+            _pending.setdefault(str(slot["id_task"]), {}).update({"cached": slot.get("n_prompt_tokens_cache"), "prompt_total": slot.get("n_prompt_tokens")})
         state = "idle"
         if slot.get("is_processing"):
             npt, npp = slot.get("n_prompt_tokens", 0), slot.get("n_prompt_tokens_processed", 0)
@@ -255,8 +257,14 @@ def fast_loop():
         prev_restarts = svc.get("NRestarts")
         if g.get("temp", 0) >= 80:
             add_event("host", "warn", f"GPU 溫度 {g['temp']:.0f} °C")
+        recent10 = list(requests_ring)[-10:]
+        def med(k):
+            v = sorted(r[k] for r in recent10 if r.get(k) is not None)
+            return v[len(v) // 2] if v else None
+        rolling = {"n": len(recent10), "tps": med("tps"), "accept": med("accept"), "prefill_tps": med("prefill_tps"), "ttft_s": med("ttft_s"), "mean_len": med("mean_len")}
         with _lock:
             now.update({
+                "rolling": rolling, "last_request": (recent10[-1] if recent10 else None),
                 "ts": time.time(), "gpu": g, "cpu": c, "proc": p, "pid": pid,
                 "service": {"active": svc.get("ActiveState"), "restarts": svc.get("NRestarts"), "since": svc.get("ActiveEnterTimestamp")},
                 "health": bool(health and health.get("status") == "ok"),
