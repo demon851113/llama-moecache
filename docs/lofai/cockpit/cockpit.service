@@ -1,0 +1,17 @@
+[Unit]
+Description=主機A 駕駛台收集器（Tailscale 內 http://100.85.251.56:8091）
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+User=lofai
+WorkingDirectory=/data/src/cockpit
+ExecStart=/usr/bin/python3 /data/src/cockpit/collector.py
+Restart=always
+RestartSec=5
+Nice=10
+StandardOutput=append:/data/src/cockpit/cockpit.log
+StandardError=append:/data/src/cockpit/cockpit.log
+
+[Install]
+WantedBy=multi-user.target
