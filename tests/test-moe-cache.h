@@ -745,3 +745,5 @@ void test_pageable_cache_fallback();
 void test_grouped_staging_benchmark();
 
 void test_cache_slots_and_staging(int dev);
+
+void test_mmq_stage_wait_timeout(int device);

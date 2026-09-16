@@ -1175,6 +1175,12 @@ bool ggml_cuda_moe_cache_set_source_for_test(struct ggml_cuda_moe_cache * cache,
 void ggml_cuda_moe_cache_fail_staging_for_test(struct ggml_cuda_moe_cache * cache, enum ggml_cuda_moe_staging_failure_for_test failure);
 struct ggml_cuda_moe_staging_state_for_test ggml_cuda_moe_cache_staging_state_for_test(struct ggml_cuda_moe_cache * cache, bool is_decode);
 
+// Runs the mapped MMQ kernel with a host-side deadline; see mmq.cu for the contract.
+int ggml_cuda_mul_mat_q_mapped_probe_for_test(
+    ggml_backend_t backend, const struct ggml_tensor * src0, const struct ggml_tensor * src1, const struct ggml_tensor * ids,
+    struct ggml_tensor * dst, const int32_t * source_map, int32_t source_split, const int32_t * source_wait_class,
+    const uint32_t * stage_ready, int timeout_ms, int * out_fault);
+
 bool ggml_cuda_moe_cache_can_overlap_staging(
     const struct ggml_cuda_moe_cache * cache);
 

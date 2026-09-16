@@ -2,8 +2,11 @@
 #include "mmq.cuh"
 #include "quantize.cuh"
 #include "mmid.cuh"
+#include "ggml-backend-impl.h"
 
+#include <chrono>
 #include <cstdint>
+#include <thread>
 
 template <bool use_x_map>
 static void ggml_cuda_mul_mat_q_switch_type(ggml_backend_cuda_context & ctx, const mmq_args & args, cudaStream_t stream) {
@@ -300,6 +303,51 @@ void ggml_cuda_mul_mat_q_mapped(
     ggml_cuda_mul_mat_q_impl(
         ctx, src0, src0_secondary, src1, ids, dst,
         source_map, source_split, source_wait_class, stage_ready);
+}
+
+// Test hook: run the mapped MMQ kernel and wait for it with a host-side deadline instead of
+// blocking in cudaStreamSynchronize. Returns 0 when the kernel finished (and reports whether
+// the staging-wait fault flag was raised), 1 when it is still running after timeout_ms, -1 on
+// bad arguments. A hang here is exactly the failure mode the fault flag exists to prevent, so
+// the caller must release the kernel itself (write the ready flag) before tearing down.
+extern "C"
+int ggml_cuda_mul_mat_q_mapped_probe_for_test(
+        ggml_backend_t backend, const ggml_tensor * src0, const ggml_tensor * src1, const ggml_tensor * ids,
+        ggml_tensor * dst, const int32_t * source_map, int32_t source_split, const int32_t * source_wait_class,
+        const uint32_t * stage_ready, int timeout_ms, int * out_fault) {
+    if (backend == nullptr || !ggml_backend_is_cuda(backend) || out_fault == nullptr ||
+            src0 == nullptr || src1 == nullptr || ids == nullptr || dst == nullptr) {
+        return -1;
+    }
+    auto * ctx = static_cast<ggml_backend_cuda_context *>(backend->context);
+    ggml_cuda_set_device(ctx->device);
+    *out_fault = 0;
+    (void) ctx->moe_stage_fault_take(); // drop any stale fault before the probe
+
+    ggml_cuda_mul_mat_q_mapped(*ctx, src0, src0->data, src1, ids, dst, source_map, source_split, source_wait_class, stage_ready);
+
+    cudaEvent_t done = nullptr;
+    CUDA_CHECK(cudaEventCreateWithFlags(&done, cudaEventDisableTiming));
+    CUDA_CHECK(cudaEventRecord(done, ctx->stream()));
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    for (;;) {
+        const cudaError_t status = cudaEventQuery(done);
+        if (status == cudaSuccess) {
+            break;
+        }
+        if (status != cudaErrorNotReady) {
+            CUDA_CHECK(cudaEventDestroy(done));
+            CUDA_CHECK(status);
+        }
+        if (std::chrono::steady_clock::now() >= deadline) {
+            CUDA_CHECK(cudaEventDestroy(done));
+            return 1;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    CUDA_CHECK(cudaEventDestroy(done));
+    *out_fault = ctx->moe_stage_fault_take() ? 1 : 0;
+    return 0;
 }
 
 static bool ggml_cuda_mmq_type_supported(enum ggml_type type) {

@@ -119,6 +119,12 @@ int main(int argc, char ** argv) {
         test_pageable_staging_pipeline(dev);
         return 0;
     }
+    if (argc == 2 && strcmp(argv[1], "--mmq-stage-wait-only") == 0) {
+        int dev = 0;
+        CUDA_OK(cudaGetDevice(&dev));
+        test_mmq_stage_wait_timeout(dev);
+        return 0;
+    }
     test_speculative_grouped_intent_splits();
     test_candidate_graph_coverage_ledger();
     test_candidate_graph_inventory_reuse();
@@ -165,5 +171,6 @@ int main(int argc, char ** argv) {
     test_active_grouped_dispatch();
 
     test_cache_slots_and_staging(dev);
+    test_mmq_stage_wait_timeout(dev);
     return 0;
 }
