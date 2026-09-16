@@ -3,6 +3,17 @@
 #include "test-moe-cache.h"
 
 int main(int argc, char ** argv) {
+    test_moe_tensor_split_rejection();
+    if (argc == 2 && strcmp(argv[1], "--tensor-policy-only") == 0) {
+        return 0;
+    }
+    if (argc == 2 && strcmp(argv[1], "--grouped-multigpu-only") == 0) {
+        return test_grouped_multigpu();
+    }
+    if (argc == 2 && strcmp(argv[1], "--grouped-layer-only") == 0) {
+        test_grouped_layer_placement();
+        return 0;
+    }
     if (argc == 2 && strcmp(argv[1], "--pageable-fallback-only") == 0) {
         test_pageable_cache_fallback();
         return 0;

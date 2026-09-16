@@ -234,40 +234,13 @@ if (NOT WIN32 OR NOT BUILD_SHARED_LIBS)
         FIXTURES_SETUP generate-models
     )
 
+    # Test recurrent/hybrid state rollback on all generated recurrent/hybrid dummy models
     llama_test(
         test-recurrent-state-rollback
         LABEL main
-        ARGS -m "${MODEL_DIR}/qwen35-dense.gguf"
+        ARGS -m "${MODEL_DIR}"
     )
     set_tests_properties(test-recurrent-state-rollback PROPERTIES
-        FIXTURES_REQUIRED generate-models
-    )
-
-    llama_test(
-        test-recurrent-state-rollback
-        NAME test-recurrent-state-rollback-nemotron-h
-        LABEL main
-        ARGS -m "${MODEL_DIR}/nemotron_h-dense.gguf"
-    )
-    set_tests_properties(test-recurrent-state-rollback-nemotron-h PROPERTIES
-        FIXTURES_REQUIRED generate-models
-    )
-    llama_test(
-        test-recurrent-state-rollback
-        NAME test-recurrent-state-rollback-dsv4
-        LABEL main
-        ARGS -m "${MODEL_DIR}/deepseek4-moe.gguf"
-    )
-    set_tests_properties(test-recurrent-state-rollback-dsv4 PROPERTIES
-        FIXTURES_REQUIRED generate-models
-    )
-    llama_test(
-        test-recurrent-state-rollback
-        NAME test-recurrent-state-rollback-kimi-k3
-        LABEL main
-        ARGS -m "${MODEL_DIR}/kimi-k3-moe.gguf"
-    )
-    set_tests_properties(test-recurrent-state-rollback-kimi-k3 PROPERTIES
         FIXTURES_REQUIRED generate-models
     )
 
@@ -430,10 +403,15 @@ if (GGML_CUDA AND NOT GGML_BACKEND_DL AND TARGET ggml-cuda AND (NOT WIN32 OR NOT
         test-moe-cache-dispatch.cpp
         test-moe-cache-mmid.cpp
         test-moe-cache-staging.cpp
+        test-moe-cache-multigpu.cpp
     )
     target_compile_features(test-moe-cache PRIVATE cxx_std_17)
     target_link_libraries(test-moe-cache PRIVATE llama ggml-cuda ggml-base CUDA::cudart)
     target_include_directories(test-moe-cache PRIVATE ${PROJECT_SOURCE_DIR}/ggml/src)
     add_test(NAME test-moe-cache COMMAND test-moe-cache)
+    add_test(NAME test-moe-cache-layer COMMAND test-moe-cache --grouped-layer-only)
+    set_tests_properties(test-moe-cache-layer PROPERTIES LABELS "main")
+    add_test(NAME test-moe-cache-multigpu COMMAND test-moe-cache --grouped-multigpu-only)
+    set_tests_properties(test-moe-cache-multigpu PROPERTIES SKIP_RETURN_CODE 77 LABELS "main;multigpu")
     set_property(TEST test-moe-cache PROPERTY LABELS "main")
 endif()
