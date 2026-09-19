@@ -416,7 +416,7 @@ def fast_loop():
                 threading.Thread(target=save_state, daemon=True).start()
             mb["m"] = m
             if "temp" in g:
-                mb["temp"].append(g["temp"]); mb["watt"].append(g.get("watt", 0)); mb["pcie"].append(g.get("pcie_rx_gbs", 0))
+                mb["temp"].append(g["temp"]); mb["watt"].append(g.get("watt") or 0); mb["pcie"].append(g.get("pcie_rx_gbs") or 0)  # AMD 無 PCIe 計數器時為 None，平均會炸
         time.sleep(max(0.5, 2.0 - (time.time() - t0)))
 
 
