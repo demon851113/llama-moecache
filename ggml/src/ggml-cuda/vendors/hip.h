@@ -77,6 +77,11 @@
 #define cudaHostRegister hipHostRegister
 #define cudaHostRegisterPortable hipHostRegisterPortable
 #define cudaHostRegisterReadOnly hipHostRegisterReadOnly
+#define cudaPointerAttributes hipPointerAttribute_t
+#define cudaPointerGetAttributes hipPointerGetAttributes
+#define cudaMemoryTypeHost hipMemoryTypeHost
+#define cudaMemoryTypeDevice hipMemoryTypeDevice
+#define cudaDevAttrHostRegisterSupported hipDeviceAttributeHostRegisterSupported
 #define cudaHostUnregister hipHostUnregister
 #define cudaHostRegisterMapped hipHostRegisterMapped
 #define cudaHostGetDevicePointer hipHostGetDevicePointer
@@ -135,6 +140,7 @@
 #define cudaStreamCaptureStatus hipStreamCaptureStatus
 #define cudaStreamCaptureStatusNone hipStreamCaptureStatusNone
 #define cudaStreamIsCapturing hipStreamIsCapturing
+#define cudaErrorStreamCaptureUnsupported hipErrorStreamCaptureUnsupported
 #define cudaGraphExec_t hipGraphExec_t
 #define cudaGraphNode_t hipGraphNode_t
 #define cudaKernelNodeParams hipKernelNodeParams

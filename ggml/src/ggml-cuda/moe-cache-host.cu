@@ -514,7 +514,7 @@ bool moe_host_register(moe_host_budget & owner, const std::vector<moe_host_sourc
     }
     const bool read_only = std::any_of(ranges.begin(), ranges.end(), [](const moe_host_range & range) { return range.read_only; });
     cudaError_t error = cudaSuccess;
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+#if !defined(GGML_USE_MUSA)
     int device = 0;
     int supported = 0;
     if ((error = cudaGetDevice(&device)) != cudaSuccess ||
@@ -522,7 +522,9 @@ bool moe_host_register(moe_host_budget & owner, const std::vector<moe_host_sourc
         return decline("host_registration_unsupported", error);
     }
     if (read_only) {
-#if CUDART_VERSION >= 11010
+#if defined(GGML_USE_HIP)
+        // HIP 沒有唯讀註冊旗標；gfx1201 + ROCm 7.1 實測唯讀 mmap 可用一般旗標註冊，故不拒絕。
+#elif CUDART_VERSION >= 11010
         if ((error = cudaDeviceGetAttribute(&supported, cudaDevAttrHostRegisterReadOnlySupported, device)) != cudaSuccess || !supported) {
             return decline("read_only_registration_unsupported", error);
         }

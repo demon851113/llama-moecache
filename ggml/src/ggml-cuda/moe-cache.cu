@@ -5280,7 +5280,7 @@ struct ggml_cuda_moe_grouped_context::impl {
             const void ** alias_data = nullptr,
             bool * host_alias = nullptr,
             const ggml_tensor * tensor = nullptr) {
-#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#if defined(GGML_USE_MUSA)
         GGML_UNUSED(buffer_base);
         GGML_UNUSED(data_offset);
         GGML_UNUSED(source_data);
@@ -5347,7 +5347,7 @@ struct ggml_cuda_moe_grouped_context::impl {
     }
 
     bool group_source_mapped(const moe_candidate_group_record & group) const {
-#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#if defined(GGML_USE_MUSA)
         GGML_UNUSED(group);
         return false;
 #else
@@ -11632,7 +11632,7 @@ static bool ggml_cuda_moe_cache_set_metadata(ggml_cuda_moe_cache * cache, const 
         cache->source->owner->retain();
         if (cache->source->device_alias == nullptr) {
             cache->host_tile_stride = cache->slot_size_bytes;
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+#if !defined(GGML_USE_MUSA)
             constexpr uint32_t max_host_tiles = 2;
 #else
             constexpr uint32_t max_host_tiles = 1;
@@ -11761,7 +11761,7 @@ static cudaError_t moe_cache_copy_source(
     }
     auto & staging = *cache->host_staging;
     cudaError_t error = cudaSuccess;
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+#if !defined(GGML_USE_MUSA)
     cudaStreamCaptureStatus capture = cudaStreamCaptureStatusNone;
     error = cudaStreamIsCapturing(stream, &capture);
     if (error == cudaSuccess && capture == cudaStreamCaptureStatusNone && stream != cache->copy_stream) {
@@ -11771,7 +11771,7 @@ static cudaError_t moe_cache_copy_source(
         return failed("staging_capture", error != cudaSuccess ? error : cudaErrorStreamCaptureUnsupported);
     }
 #endif
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+#if !defined(GGML_USE_MUSA)
     const bool pipeline = cache->staging_pipeline_enabled && !is_decode && stream == cache->copy_stream && cache->host_tile_done[1] != nullptr;
 #else
     const bool pipeline = false;
