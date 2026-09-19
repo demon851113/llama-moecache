@@ -5545,6 +5545,27 @@ static int ggml_cuda_try_fuse_gated_residual(ggml_backend_cuda_context * cuda_ct
     } else {
         return 0;
     }
+    // 別名安全：融合核心在 ADD 的位置讀 g／b，這兩塊在配置器眼中此時已死，只有在
+    // 「鏈就地於 g、MUL 就地於 REPEAT、ADD 就地於 res 或 MUL」時，它們的區塊才保證還沒被重用
+    static const bool debug = getenv("GGML_CUDA_UNARY_CHAIN_DEBUG") != nullptr;
+    static int debug_left = 60;
+    const char * bail = nullptr;
+    const ggml_tensor * g = cgraph->nodes[i]->src[0];
+    if (chain_end->data != g->data) {
+        bail = "chain_not_inplace";
+    } else if (add->data != res->data && add->data != mul->data) {
+        bail = "add_not_inplace";
+    } else if (repeat != nullptr && mul->data != repeat->data) {
+        bail = "mul_not_inplace_over_repeat";
+    }
+    if (debug && debug_left > 0) {
+        --debug_left;
+        GGML_LOG_INFO("gated-residual: add=%s E=%lld H=%lld T=%lld repeat=%d chain=%d %s\n",
+            add->name, (long long) E, (long long) H, (long long) T, repeat != nullptr, n_chain, bail ? bail : "FUSED");
+    }
+    if (bail != nullptr) {
+        return 0;
+    }
     ggml_cuda_op_gated_residual(*cuda_ctx, &cgraph->nodes[i], n_chain, res, b, b_has_h, add);
     return add_idx - i;
 }
