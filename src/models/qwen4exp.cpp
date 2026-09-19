@@ -318,8 +318,10 @@ ggml_tensor * llama_model_qwen4exp::graph::build_hc_mix(
     // the converter folded each gamma to (1 + w)
     // 在 [n_embd, hc, T] 上直接乘（gamma 視為 [n_embd, hc]），再攤平成 [hc_dim, T]：
     // 數值與先攤平再乘完全相同，但 MUL 的來源就是 RMS_NORM 本身，後端的 RMS_NORM+MUL 融合才會命中
+    ggml_tensor * w_norm_3d = ggml_reshape_2d(ctx0, w_norm, n_embd, hc);
+    ggml_build_forward_expand(gf, w_norm_3d);   // 讓這個 view 節點先進圖，RMS_NORM 與 MUL 才會相鄰（融合要求連續）
     ggml_tensor * xn = ggml_rms_norm(ctx0, x, hparams.f_norm_rms_eps);
-    xn = ggml_mul(ctx0, xn, ggml_reshape_2d(ctx0, w_norm, n_embd, hc));
+    xn = ggml_mul(ctx0, xn, w_norm_3d);
     xn = ggml_reshape_2d(ctx0, xn, hc_dim, nt);
     cb(xn, "hc_norm", il);
 

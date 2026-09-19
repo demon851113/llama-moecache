@@ -5564,8 +5564,9 @@ static int ggml_cuda_try_fuse_gated_residual(ggml_backend_cuda_context * cuda_ct
     } else if (repeat != nullptr && mul->data != repeat->data) {
         bail = "mul_not_inplace_over_repeat";
     }
-    if (debug && debug_left > 0) {
-        --debug_left;
+    static int debug_fused_left = 8;
+    if (debug && ((bail != nullptr && debug_left > 0) || (bail == nullptr && debug_fused_left > 0))) {
+        if (bail != nullptr) { --debug_left; } else { --debug_fused_left; }
         GGML_LOG_INFO("gated-residual: add=%s E=%lld H=%lld T=%lld repeat=%d chain=%d %s\n",
             add->name, (long long) E, (long long) H, (long long) T, repeat != nullptr, n_chain, bail ? bail : "FUSED");
     }
@@ -6519,6 +6520,20 @@ static int ggml_cuda_try_fuse(
     if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL }, {})) {
         ggml_cuda_op_rms_norm_fused(*cuda_ctx, node, cgraph->nodes[i + 1]);
         return 1;
+    }
+
+    if (node->op == GGML_OP_RMS_NORM) {
+        static const bool rms_debug = getenv("GGML_CUDA_UNARY_CHAIN_DEBUG") != nullptr;
+        static int rms_debug_left = 40;
+        if (rms_debug && rms_debug_left > 0 && i + 1 < cgraph->n_nodes) {
+            --rms_debug_left;
+            const ggml_tensor * nx = cgraph->nodes[i + 1];
+            GGML_LOG_INFO("rms-next: %s -> %s(%s) src0_is_rms=%d src1_is_rms=%d uses1=%d same_shape=%d compute=%d can_scale=%d can_mul=%d\n",
+                node->name, nx->name, ggml_op_desc(nx), (int) (nx->src[0] == node), (int) (nx->src[1] == node),
+                (int) ggml_node_has_n_uses(cgraph, i, 1), (int) ggml_are_same_shape(node, nx), (int) ((nx->flags & GGML_TENSOR_FLAG_COMPUTE) != 0),
+                (int) ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_SCALE }, {}),
+                (int) ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_MUL }, {}));
+        }
     }
 
     // RMS_NORM → SCALE（gdn l2 norm：rms_norm 後乘 1/sqrt(n)），同形狀、無偏移
