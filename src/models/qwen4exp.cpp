@@ -316,9 +316,11 @@ ggml_tensor * llama_model_qwen4exp::graph::build_hc_mix(
 
     // grouped RMSNorm: reduce over one stream, then scale all streams with the [hc_dim] gamma
     // the converter folded each gamma to (1 + w)
+    // 在 [n_embd, hc, T] 上直接乘（gamma 視為 [n_embd, hc]），再攤平成 [hc_dim, T]：
+    // 數值與先攤平再乘完全相同，但 MUL 的來源就是 RMS_NORM 本身，後端的 RMS_NORM+MUL 融合才會命中
     ggml_tensor * xn = ggml_rms_norm(ctx0, x, hparams.f_norm_rms_eps);
+    xn = ggml_mul(ctx0, xn, ggml_reshape_2d(ctx0, w_norm, n_embd, hc));
     xn = ggml_reshape_2d(ctx0, xn, hc_dim, nt);
-    xn = ggml_mul(ctx0, xn, w_norm);
     cb(xn, "hc_norm", il);
 
     ggml_tensor * lo = build_lora_mm(w_down, xn);
