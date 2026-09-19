@@ -6439,14 +6439,24 @@ static int ggml_cuda_try_fuse(
 
     // 通用逐元素鏈：SCALE／單輸入 UNARY 連續多個，串成一次啟動（放在特定樣式之後，讓特定融合優先）
     if (ggml_cuda_unary_chain_supported(node)) {
+        static const bool chain_debug = getenv("GGML_CUDA_UNARY_CHAIN_DEBUG") != nullptr;
+        static int chain_debug_left = 40;
         int n = 1;
+        const char * stop = "";
         while (n < 8 && i + n < cgraph->n_nodes) {
             ggml_tensor * next = cgraph->nodes[i + n];
-            if (!ggml_cuda_unary_chain_supported(next) || next->src[0] != cgraph->nodes[i + n - 1] ||
-                    !ggml_node_has_n_uses(cgraph, i + n - 1, 1) || (next->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
-                break;
-            }
+            if (!ggml_cuda_unary_chain_supported(next)) { stop = "next_unsupported"; break; }
+            if (next->src[0] != cgraph->nodes[i + n - 1]) { stop = "next_not_consumer"; break; }
+            if (!ggml_node_has_n_uses(cgraph, i + n - 1, 1)) { stop = "prev_multi_use"; break; }
+            if ((next->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) { stop = "next_not_compute"; break; }
             ++n;
+        }
+        if (chain_debug && chain_debug_left > 0) {
+            --chain_debug_left;
+            const ggml_tensor * next = i + 1 < cgraph->n_nodes ? cgraph->nodes[i + 1] : nullptr;
+            GGML_LOG_INFO("unary-chain: node=%s op=%s n=%d stop=%s next=%s(%s) next_src0_is_prev=%d prev_uses1=%d\n",
+                node->name, ggml_op_desc(node), n, stop, next ? next->name : "-", next ? ggml_op_desc(next) : "-",
+                next ? (int) (next->src[0] == node) : -1, (int) ggml_node_has_n_uses(cgraph, i, 1));
         }
         if (n >= 2) {
             ggml_cuda_op_unary_chain(*cuda_ctx, &cgraph->nodes[i], n);
