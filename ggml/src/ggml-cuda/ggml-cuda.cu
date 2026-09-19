@@ -2180,7 +2180,7 @@ static bool ggml_cuda_mul_mat_id_impl(
     const int n_wait_classes = host_route && host_route->source_wait_class ? host_route->n_wait_classes : 1;
     GGML_ASSERT(n_wait_classes > 0);
     for (int wait_class = 0; wait_class < n_wait_classes; ++wait_class) {
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && !defined(GGML_CUDA_NO_VMM)
+#if defined(GGML_USE_HIP) || (!defined(GGML_USE_MUSA) && !defined(GGML_CUDA_NO_VMM))
         if (wait_class > 0) {
             GGML_ASSERT(host_route->stage_ready != nullptr);
             CU_CHECK(cuStreamWaitValue32(

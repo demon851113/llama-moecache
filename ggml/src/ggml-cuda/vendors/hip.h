@@ -93,6 +93,14 @@
 #define cudaErrorNotReady hipErrorNotReady
 #define cudaEventQuery hipEventQuery
 #define cudaStreamCaptureModeThreadLocal hipStreamCaptureModeThreadLocal
+// stream 記憶體操作（moe-cache 搬運/計算重疊用）：HIP 有對等 API，gfx1201 + ROCm 7.1 實測可用
+#define CUdeviceptr uintptr_t
+#define CUDA_SUCCESS hipSuccess
+#define CU_STREAM_WRITE_VALUE_DEFAULT 0u
+#define CU_STREAM_WAIT_VALUE_EQ hipStreamWaitValueEq
+#define cuStreamWriteValue32(stream, ptr, value, flags) hipStreamWriteValue32(stream, (void *) (uintptr_t) (ptr), value, flags)
+#define cuStreamWaitValue32(stream, ptr, value, flags) hipStreamWaitValue32(stream, (void *) (uintptr_t) (ptr), value, flags)
+#define CU_CHECK(err) CUDA_CHECK(err)
 #ifndef CUDART_CB
 #define CUDART_CB
 #endif

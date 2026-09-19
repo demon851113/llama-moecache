@@ -11996,9 +11996,14 @@ static ggml_cuda_moe_cache * ggml_cuda_moe_cache_init_with_pool(
     }
 
 // Use event staging on Windows; a failed host-mapped memop can poison the CUDA context.
-#if !defined(_WIN32) && !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && !defined(GGML_CUDA_NO_VMM) && CUDART_VERSION >= 12080
+#if defined(GGML_USE_HIP) || (!defined(_WIN32) && !defined(GGML_USE_MUSA) && !defined(GGML_CUDA_NO_VMM) && CUDART_VERSION >= 12080)
     bool can_use_stream_mem_ops = true;
-#if CUDA_VERSION < 13000
+#if defined(GGML_USE_HIP)
+    int stream_mem_ops_attribute = 0;
+    can_use_stream_mem_ops =
+        cudaDeviceGetAttribute(&stream_mem_ops_attribute, hipDeviceAttributeCanUseStreamWaitValue, device) == cudaSuccess &&
+        stream_mem_ops_attribute != 0;
+#elif CUDA_VERSION < 13000
     CUdevice cu_device;
     int stream_mem_ops_attribute = 0;
     can_use_stream_mem_ops =
@@ -12774,7 +12779,7 @@ bool ggml_cuda_moe_cache_prepare_split_staging(
         return false;
     }
 
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && !defined(GGML_CUDA_NO_VMM)
+#if defined(GGML_USE_HIP) || (!defined(GGML_USE_MUSA) && !defined(GGML_CUDA_NO_VMM))
     if (overlap) {
         CU_CHECK(cuStreamWriteValue32(
             cache->copy_stream, (CUdeviceptr)(stage_ready + 0), 1, CU_STREAM_WRITE_VALUE_DEFAULT));
@@ -12831,7 +12836,7 @@ bool ggml_cuda_moe_cache_prepare_split_staging(
             CUDA_CHECK(cudaMemsetAsync(
                 (char *) miss_dst + (size_t) n_misses * byte_count, 0, trailing_padding, cache->copy_stream));
         }
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && !defined(GGML_CUDA_NO_VMM)
+#if defined(GGML_USE_HIP) || (!defined(GGML_USE_MUSA) && !defined(GGML_CUDA_NO_VMM))
         if (overlap) {
             CU_CHECK(cuStreamWriteValue32(
                 cache->copy_stream, (CUdeviceptr)(stage_ready + wave + 1), 1, CU_STREAM_WRITE_VALUE_DEFAULT));
