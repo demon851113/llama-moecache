@@ -719,3 +719,96 @@ void ggml_cuda_op_relu_sqr(ggml_backend_cuda_context & ctx, ggml_tensor * relu_n
         unary_cuda<op_relu_sqr>((const float *)src->data, (float *)sqr_node->data, k, stream);
     }
 }
+
+/* 通用逐元素鏈融合：連續的 SCALE／單輸入 UNARY（同形狀、連續、中間結果單一使用者）合成一次啟動
+   目的：Qwen3-Next 線性注意力閘門路徑每層有多段 SCALE>SILU、MUL>SIGMOID>SCALE 這類短鏈，
+   在 ROCm 上每次核心啟動固定成本高（~5–10 µs），合併後啟動次數大幅下降。 */
+
+#define GGML_CUDA_UNARY_CHAIN_MAX 8
+
+struct ggml_cuda_unary_chain_params {
+    int   n;
+    int   op[GGML_CUDA_UNARY_CHAIN_MAX];   // -1 = scale(a*x+b)，否則為 ggml_unary_op
+    float a[GGML_CUDA_UNARY_CHAIN_MAX];
+    float b[GGML_CUDA_UNARY_CHAIN_MAX];
+};
+
+static __device__ __forceinline__ float unary_chain_apply(float v, int op, float a, float b) {
+    switch (op) {
+        case -1:                        return a * v + b;
+        case GGML_UNARY_OP_SIGMOID:     return op_sigmoid(v);
+        case GGML_UNARY_OP_SILU:        return op_silu(v);
+        case GGML_UNARY_OP_SOFTPLUS:    return op_softplus(v);
+        case GGML_UNARY_OP_TANH:        return op_tanh(v);
+        case GGML_UNARY_OP_EXP:         return op_exp(v);
+        case GGML_UNARY_OP_RELU:        return op_relu(v);
+        case GGML_UNARY_OP_GELU:        return op_gelu(v);
+        case GGML_UNARY_OP_GELU_QUICK:  return op_gelu_quick(v);
+        case GGML_UNARY_OP_NEG:         return op_neg(v);
+        case GGML_UNARY_OP_ABS:         return op_abs(v);
+        case GGML_UNARY_OP_HARDSIGMOID: return op_hardsigmoid(v);
+        case GGML_UNARY_OP_HARDSWISH:   return op_hardswish(v);
+        case GGML_UNARY_OP_ELU:         return op_elu(v);
+        default:                        return v;
+    }
+}
+
+static __global__ void unary_chain_f32(const float * x, float * dst, const int64_t k, const ggml_cuda_unary_chain_params p) {
+    const int64_t tid    = (int64_t) blockIdx.x * blockDim.x + threadIdx.x;
+    const int64_t stride = (int64_t) blockDim.x * gridDim.x;
+    for (int64_t i = tid; i < k; i += stride) {
+        float v = x[i];
+#pragma unroll
+        for (int j = 0; j < GGML_CUDA_UNARY_CHAIN_MAX; ++j) {
+            if (j < p.n) {
+                v = unary_chain_apply(v, p.op[j], p.a[j], p.b[j]);
+            }
+        }
+        dst[i] = v;
+    }
+}
+
+bool ggml_cuda_unary_chain_supported(const ggml_tensor * node) {
+    if (node->type != GGML_TYPE_F32 || node->src[0] == nullptr || node->src[0]->type != GGML_TYPE_F32 ||
+            !ggml_is_contiguous(node) || !ggml_is_contiguous(node->src[0]) || !ggml_are_same_shape(node, node->src[0])) {
+        return false;
+    }
+    if (node->op == GGML_OP_SCALE) {
+        return true;
+    }
+    if (node->op != GGML_OP_UNARY) {
+        return false;
+    }
+    switch (ggml_get_unary_op(node)) {
+        case GGML_UNARY_OP_SIGMOID: case GGML_UNARY_OP_SILU: case GGML_UNARY_OP_SOFTPLUS: case GGML_UNARY_OP_TANH:
+        case GGML_UNARY_OP_EXP: case GGML_UNARY_OP_RELU: case GGML_UNARY_OP_GELU: case GGML_UNARY_OP_GELU_QUICK:
+        case GGML_UNARY_OP_NEG: case GGML_UNARY_OP_ABS: case GGML_UNARY_OP_HARDSIGMOID: case GGML_UNARY_OP_HARDSWISH:
+        case GGML_UNARY_OP_ELU:
+            return true;
+        default:
+            return false;
+    }
+}
+
+void ggml_cuda_op_unary_chain(ggml_backend_cuda_context & ctx, ggml_tensor ** nodes, int n) {
+    GGML_ASSERT(2 <= n && n <= GGML_CUDA_UNARY_CHAIN_MAX);
+    ggml_cuda_unary_chain_params p;
+    p.n = n;
+    for (int j = 0; j < n; ++j) {
+        const ggml_tensor * t = nodes[j];
+        if (t->op == GGML_OP_SCALE) {
+            p.op[j] = -1;
+            memcpy(&p.a[j], (const float *) t->op_params + 0, sizeof(float));
+            memcpy(&p.b[j], (const float *) t->op_params + 1, sizeof(float));
+        } else {
+            p.op[j] = (int) ggml_get_unary_op(t);
+            p.a[j] = 1.0f; p.b[j] = 0.0f;
+        }
+    }
+    for (int j = n; j < GGML_CUDA_UNARY_CHAIN_MAX; ++j) { p.op[j] = -2; p.a[j] = 1.0f; p.b[j] = 0.0f; }
+    const ggml_tensor * src = nodes[0]->src[0];
+    ggml_tensor * dst = nodes[n - 1];
+    const int64_t k = ggml_nelements(src);
+    const int64_t num_blocks = std::min<int64_t>((k + CUDA_NEG_BLOCK_SIZE - 1) / CUDA_NEG_BLOCK_SIZE, 65535);
+    unary_chain_f32<<<(int) num_blocks, CUDA_NEG_BLOCK_SIZE, 0, ctx.stream()>>>((const float *) src->data, (float *) dst->data, k, p);
+}

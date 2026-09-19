@@ -6437,6 +6437,23 @@ static int ggml_cuda_try_fuse(
         return 2;
     }
 
+    // 通用逐元素鏈：SCALE／單輸入 UNARY 連續多個，串成一次啟動（放在特定樣式之後，讓特定融合優先）
+    if (ggml_cuda_unary_chain_supported(node)) {
+        int n = 1;
+        while (n < 8 && i + n < cgraph->n_nodes) {
+            ggml_tensor * next = cgraph->nodes[i + n];
+            if (!ggml_cuda_unary_chain_supported(next) || next->src[0] != cgraph->nodes[i + n - 1] ||
+                    !ggml_node_has_n_uses(cgraph, i + n - 1, 1) || (next->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
+                break;
+            }
+            ++n;
+        }
+        if (n >= 2) {
+            ggml_cuda_op_unary_chain(*cuda_ctx, &cgraph->nodes[i], n);
+            return n - 1;
+        }
+    }
+
     return 0;
 }
 

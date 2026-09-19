@@ -121,3 +121,6 @@ __device__ __forceinline__ float ggml_cuda_op_swiglu_clamp_single(float gate, fl
 
     return ggml_cuda_op_silu_single(gate) * up;
 }
+
+bool ggml_cuda_unary_chain_supported(const ggml_tensor * node);
+void ggml_cuda_op_unary_chain(ggml_backend_cuda_context & ctx, ggml_tensor ** nodes, int n);
