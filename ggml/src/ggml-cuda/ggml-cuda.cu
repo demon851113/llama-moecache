@@ -6521,6 +6521,16 @@ static int ggml_cuda_try_fuse(
         return 1;
     }
 
+    // RMS_NORM → SCALE（gdn l2 norm：rms_norm 後乘 1/sqrt(n)），同形狀、無偏移
+    if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_RMS_NORM, GGML_OP_SCALE }, {})) {
+        const ggml_tensor * sc = cgraph->nodes[i + 1];
+        float bias; memcpy(&bias, (const float *) sc->op_params + 1, sizeof(float));
+        if (bias == 0.0f && node->type == GGML_TYPE_F32 && sc->type == GGML_TYPE_F32 && ggml_is_contiguous(sc)) {
+            ggml_cuda_op_rms_norm_scale(*cuda_ctx, node, cgraph->nodes[i + 1]);
+            return 1;
+        }
+    }
+
     if (ggml_cuda_can_fuse(cgraph, i, { GGML_OP_SSM_CONV, GGML_OP_ADD, GGML_OP_UNARY }, { GGML_UNARY_OP_SILU })) {
         ggml_cuda_op_ssm_conv(*cuda_ctx, node, cgraph->nodes[i + 1], cgraph->nodes[i + 2]);
         return 2;
