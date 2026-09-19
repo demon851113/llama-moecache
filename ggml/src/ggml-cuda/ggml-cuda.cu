@@ -5549,11 +5549,17 @@ static int ggml_cuda_try_fuse_gated_residual(ggml_backend_cuda_context * cuda_ct
     // 「鏈就地於 g、MUL 就地於 REPEAT、ADD 就地於 res 或 MUL」時，它們的區塊才保證還沒被重用
     static const bool debug = getenv("GGML_CUDA_UNARY_CHAIN_DEBUG") != nullptr;
     static int debug_left = 60;
+    // 模式：0 關閉、1 只合鏈+REPEAT+MUL（ADD 照舊）、2 連 ADD 一起合
+    static const int mode = getenv("GGML_CUDA_GATED_RESIDUAL_MODE") ? atoi(getenv("GGML_CUDA_GATED_RESIDUAL_MODE")) : 1;
+    if (mode == 0) {
+        return 0;
+    }
+    const bool with_add = mode >= 2;
     const char * bail = nullptr;
     const ggml_tensor * g = cgraph->nodes[i]->src[0];
     if (chain_end->data != g->data) {
         bail = "chain_not_inplace";
-    } else if (add->data != res->data && add->data != mul->data) {
+    } else if (with_add && add->data != res->data && add->data != mul->data) {
         bail = "add_not_inplace";
     } else if (repeat != nullptr && mul->data != repeat->data) {
         bail = "mul_not_inplace_over_repeat";
@@ -5565,6 +5571,10 @@ static int ggml_cuda_try_fuse_gated_residual(ggml_backend_cuda_context * cuda_ct
     }
     if (bail != nullptr) {
         return 0;
+    }
+    if (!with_add) {
+        ggml_cuda_op_gated_residual(*cuda_ctx, &cgraph->nodes[i], n_chain, nullptr, b, b_has_h, const_cast<ggml_tensor *>(mul));
+        return mul_idx - i;
     }
     ggml_cuda_op_gated_residual(*cuda_ctx, &cgraph->nodes[i], n_chain, res, b, b_has_h, add);
     return add_idx - i;

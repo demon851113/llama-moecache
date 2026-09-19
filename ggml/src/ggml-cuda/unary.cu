@@ -838,7 +838,8 @@ static __global__ void gated_residual_f32(const float * res, const float * b, co
             }
         }
         const int64_t bi = b_has_h ? i : e + E * t;
-        dst[i] = __fadd_rn(res[i], __fmul_rn(b[bi], w));
+        const float prod = __fmul_rn(b[bi], w);
+        dst[i] = res != nullptr ? __fadd_rn(res[i], prod) : prod;
     }
 }
 
@@ -851,6 +852,6 @@ void ggml_cuda_op_gated_residual(ggml_backend_cuda_context & ctx, ggml_tensor **
     const int64_t k = E * H * T;
     const int64_t num_blocks = std::min<int64_t>((k + CUDA_NEG_BLOCK_SIZE - 1) / CUDA_NEG_BLOCK_SIZE, 65535);
     gated_residual_f32<<<(int) num_blocks, CUDA_NEG_BLOCK_SIZE, 0, ctx.stream()>>>(
-        (const float *) res->data, (const float *) b->data, (const float *) g->data, (float *) dst->data,
+        res != nullptr ? (const float *) res->data : nullptr, (const float *) b->data, (const float *) g->data, (float *) dst->data,
         E, H, T, b_has_h ? 1 : 0, p);
 }
