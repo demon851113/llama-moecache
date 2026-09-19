@@ -92,7 +92,8 @@ function(ggml_cuda_fattn_vec_instances DIR OUT_SRCS)
     endif()
     list(REMOVE_DUPLICATES FA_COMBINATIONS)
 
-    string(REPLACE ";" "," FA_QUANTS_DEFINE "${FA_QUANTS}")
+    # 用 "/" 而不是 ","：SCALE 的 nvcc 包裝會把含逗號的 -D 引數拆開，變成 -Df16-f16 之類的垃圾巨集
+    string(REPLACE ";" "/" FA_QUANTS_DEFINE "${FA_QUANTS}")
     add_compile_definitions(GGML_CUDA_FA_QUANTS="${FA_QUANTS_DEFINE}")
     foreach (TYPE_V IN LISTS FA_TYPES)
         foreach (TYPE_K IN LISTS FA_TYPES)
