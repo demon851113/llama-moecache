@@ -2791,7 +2791,8 @@ int32_t llama_context::decode_sampled(const llama_sampled_decode_item * items, i
 
     auto * backend = ggml_backend_sched_get_tensor_backend(sched.get(), sources[0]);
     auto * device = backend ? ggml_backend_get_device(backend) : nullptr;
-    if (!device || strcmp(ggml_backend_reg_name(ggml_backend_dev_backend_reg(device)), "CUDA") != 0 ||
+    const char * dev_reg_name = device ? ggml_backend_reg_name(ggml_backend_dev_backend_reg(device)) : "";
+    if (!device || (strcmp(dev_reg_name, "CUDA") != 0 && strcmp(dev_reg_name, "ROCm") != 0) ||
             (!host_inputs && (!model.tok_embd || !model.tok_embd->buffer || ggml_backend_buffer_is_host(model.tok_embd->buffer) ||
              ggml_backend_buft_get_device(ggml_backend_buffer_get_type(model.tok_embd->buffer)) != device))) {
         return 1;

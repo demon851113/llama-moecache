@@ -1558,7 +1558,9 @@ struct common_speculative_impl_draft_mtp : public common_speculative_impl {
             return false;
         }
         auto * device = llama_model_get_device(model, 0);
-        return device && strcmp(ggml_backend_reg_name(ggml_backend_dev_backend_reg(device)), "CUDA") == 0;
+        const char * reg_name = device ? ggml_backend_reg_name(ggml_backend_dev_backend_reg(device)) : "";
+        // HIP 版與 CUDA 走同一套 ggml-cuda 程式碼，後端登記名為 "ROCm"
+        return device && (strcmp(reg_name, "CUDA") == 0 || strcmp(reg_name, "ROCm") == 0);
     }
 
     void discard_draft_overlap(llama_seq_id seq_id) override {
