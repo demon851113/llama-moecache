@@ -6,7 +6,7 @@
 #include <new>
 
 // Windows uses host inputs until the host-mapped memop path is validated.
-#if !defined(_WIN32) && !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && CUDART_VERSION >= 12000
+#if !defined(_WIN32) && !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA) && CUDART_VERSION >= 12000 && !defined(__SCALE_CUDA_VER_MAJOR__) /* SCALE 無 stream 等待 memop */
 #include <cudaTypedefs.h>
 
 namespace {
