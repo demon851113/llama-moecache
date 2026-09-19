@@ -7979,6 +7979,14 @@ void ggml_cuda_moe_grouped_context::configure_early_router(
         const auto & resource = impl_->resources[group.key.candidate.group_index];
         if (resource == nullptr || resource->device == nullptr || resource->device->materialization == nullptr ||
                 resource->device->materialization->storage.tiles < uint32_t(group.key.ids.ne[0])) {
+            static const bool why2 = getenv("GGML_CUDA_MOE_PREPACK_DEBUG") != nullptr;
+            if (why2) {
+                fprintf(stderr, "moe-early-router: group=%u skipped resource=%d device=%d materialization=%d tiles=%u need=%lld\n",
+                    index, (int) (resource != nullptr), (int) (resource != nullptr && resource->device != nullptr),
+                    (int) (resource != nullptr && resource->device != nullptr && resource->device->materialization != nullptr),
+                    (resource != nullptr && resource->device != nullptr && resource->device->materialization != nullptr) ? resource->device->materialization->storage.tiles : 0u,
+                    (long long) group.key.ids.ne[0]);
+            }
             continue;
         }
         const auto decline = [&](const char * reason) {
