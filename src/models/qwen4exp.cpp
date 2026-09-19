@@ -362,6 +362,8 @@ ggml_tensor * llama_model_qwen4exp::graph::build_hc_combine(
     ggml_tensor * w = ggml_sigmoid(ctx0, ggml_scale(ctx0, inject, 1.0f / (float) hc));
     w = ggml_scale(ctx0, w, 2.0f);
     w = ggml_reshape_3d(ctx0, w, 1, hc, nt);
+    // 先把 w 展開進圖，讓 REPEAT／MUL／ADD 在圖中緊鄰，後端才能把整段合成一次核心
+    ggml_build_forward_expand(gf, w);
 
     ggml_tensor * b = ggml_reshape_3d(ctx0, block_out, n_embd, 1, nt);
     b = ggml_repeat_4d(ctx0, b, n_embd, hc, nt, 1);

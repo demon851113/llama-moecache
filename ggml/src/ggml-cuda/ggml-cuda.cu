@@ -5469,6 +5469,86 @@ static bool ggml_cuda_can_fuse(const struct ggml_cgraph *                cgraph,
 }
 
 // try and fuse nodes and return the number of nodes to skip
+
+// 門控殘差匹配：[鏈 n>=1 於小張量 g] [view*] [REPEAT(b)]? [view*] MUL(full, view(g)) ADD(res, mul)
+// 命中則一次核心取代 REPEAT／MUL／ADD 與鏈本身；回傳要跳過的節點數，0 = 未命中
+static int ggml_cuda_try_fuse_gated_residual(ggml_backend_cuda_context * cuda_ctx, const ggml_cgraph * cgraph, int i, int n_chain) {
+    const int n_nodes = cgraph->n_nodes;
+    const int end_idx = i + n_chain - 1;
+    const ggml_tensor * chain_end = cgraph->nodes[end_idx];
+    if (!ggml_node_has_n_uses(cgraph, end_idx, 1)) {
+        return 0;
+    }
+    int j = end_idx + 1;
+    auto skip_views = [&]() { while (j < n_nodes && ggml_cuda_is_view_or_noop(cgraph->nodes[j])) { ++j; } };
+    skip_views();
+    const ggml_tensor * repeat = nullptr;
+    int repeat_idx = -1;
+    if (j < n_nodes && cgraph->nodes[j]->op == GGML_OP_REPEAT) {
+        repeat = cgraph->nodes[j]; repeat_idx = j; ++j; skip_views();
+    }
+    if (j >= n_nodes || cgraph->nodes[j]->op != GGML_OP_MUL) {
+        return 0;
+    }
+    const ggml_tensor * mul = cgraph->nodes[j];
+    const int mul_idx = j; ++j; skip_views();
+    if (j >= n_nodes || cgraph->nodes[j]->op != GGML_OP_ADD) {
+        return 0;
+    }
+    ggml_tensor * add = cgraph->nodes[j];
+    const int add_idx = j;
+
+    // 資料流
+    const ggml_tensor * gv   = mul->src[1];
+    const ggml_tensor * full = mul->src[0];
+    if (gv != chain_end) {
+        if (gv->view_src != chain_end || gv->view_offs != 0 || ggml_nelements(gv) != ggml_nelements(chain_end)) {
+            return 0;
+        }
+    }
+    const ggml_tensor * b = full;
+    if (repeat) {
+        if (full != repeat || !ggml_node_has_n_uses(cgraph, repeat_idx, 1)) {
+            return 0;
+        }
+        b = repeat->src[0];
+    }
+    if (!ggml_node_has_n_uses(cgraph, mul_idx, 1)) {
+        return 0;
+    }
+    const ggml_tensor * res = add->src[1] == mul ? add->src[0] : (add->src[0] == mul ? add->src[1] : nullptr);
+    if (res == nullptr) {
+        return 0;
+    }
+    for (const ggml_tensor * t : { (const ggml_tensor *) add, res, mul, b, gv, chain_end->src[0] }) {
+        if (t->type != GGML_TYPE_F32 || !ggml_is_contiguous(t) || t->ne[3] != 1) {
+            return 0;
+        }
+    }
+    for (const ggml_tensor * t : { repeat, mul, (const ggml_tensor *) add }) {
+        if (t != nullptr && (t->flags & GGML_TENSOR_FLAG_COMPUTE) == 0) {
+            return 0;
+        }
+    }
+    const int64_t E = add->ne[0], H = add->ne[1], T = add->ne[2];
+    if (!ggml_are_same_shape(res, add) || !ggml_are_same_shape(mul, add)) {
+        return 0;
+    }
+    if (gv->ne[0] != 1 || gv->ne[1] != H || gv->ne[2] != T) {
+        return 0;
+    }
+    bool b_has_h;
+    if (ggml_are_same_shape(b, add)) {
+        b_has_h = true;
+    } else if (b->ne[0] == E && b->ne[1] == 1 && b->ne[2] == T) {
+        b_has_h = false;
+    } else {
+        return 0;
+    }
+    ggml_cuda_op_gated_residual(*cuda_ctx, &cgraph->nodes[i], n_chain, res, b, b_has_h, add);
+    return add_idx - i;
+}
+
 static int ggml_cuda_try_fuse(
         ggml_backend_cuda_context * cuda_ctx,
         ggml_cgraph * cgraph,
@@ -6457,6 +6537,12 @@ static int ggml_cuda_try_fuse(
             GGML_LOG_INFO("unary-chain: node=%s op=%s n=%d stop=%s next=%s(%s) next_src0_is_prev=%d prev_uses1=%d\n",
                 node->name, ggml_op_desc(node), n, stop, next ? next->name : "-", next ? ggml_op_desc(next) : "-",
                 next ? (int) (next->src[0] == node) : -1, (int) ggml_node_has_n_uses(cgraph, i, 1));
+        }
+        {
+            const int skip = ggml_cuda_try_fuse_gated_residual(cuda_ctx, cgraph, i, n);
+            if (skip > 0) {
+                return skip;
+            }
         }
         if (n >= 2) {
             ggml_cuda_op_unary_chain(*cuda_ctx, &cgraph->nodes[i], n);

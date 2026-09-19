@@ -790,9 +790,8 @@ bool ggml_cuda_unary_chain_supported(const ggml_tensor * node) {
     }
 }
 
-void ggml_cuda_op_unary_chain(ggml_backend_cuda_context & ctx, ggml_tensor ** nodes, int n) {
-    GGML_ASSERT(2 <= n && n <= GGML_CUDA_UNARY_CHAIN_MAX);
-    ggml_cuda_unary_chain_params p;
+static void unary_chain_fill_params(ggml_tensor ** nodes, int n, ggml_cuda_unary_chain_params & p) {
+    GGML_ASSERT(1 <= n && n <= GGML_CUDA_UNARY_CHAIN_MAX);
     p.n = n;
     for (int j = 0; j < n; ++j) {
         const ggml_tensor * t = nodes[j];
@@ -806,9 +805,52 @@ void ggml_cuda_op_unary_chain(ggml_backend_cuda_context & ctx, ggml_tensor ** no
         }
     }
     for (int j = n; j < GGML_CUDA_UNARY_CHAIN_MAX; ++j) { p.op[j] = -2; p.a[j] = 1.0f; p.b[j] = 0.0f; }
+}
+
+void ggml_cuda_op_unary_chain(ggml_backend_cuda_context & ctx, ggml_tensor ** nodes, int n) {
+    GGML_ASSERT(2 <= n && n <= GGML_CUDA_UNARY_CHAIN_MAX);
+    ggml_cuda_unary_chain_params p;
+    unary_chain_fill_params(nodes, n, p);
     const ggml_tensor * src = nodes[0]->src[0];
     ggml_tensor * dst = nodes[n - 1];
     const int64_t k = ggml_nelements(src);
     const int64_t num_blocks = std::min<int64_t>((k + CUDA_NEG_BLOCK_SIZE - 1) / CUDA_NEG_BLOCK_SIZE, 65535);
     unary_chain_f32<<<(int) num_blocks, CUDA_NEG_BLOCK_SIZE, 0, ctx.stream()>>>((const float *) src->data, (float *) dst->data, k, p);
+}
+
+// 門控殘差：dst[e,h,t] = res[e,h,t] + b[e,(h),t] * chain(g[h,t])
+// 對應 hc_combine（SCALE>SIGMOID>SCALE + REPEAT + MUL + ADD）與共享專家門控（SIGMOID + MUL + ADD）。
+// 乘加拆成兩次捨入（__fmul_rn／__fadd_rn），與未融合的 MUL、ADD 逐位元一致。
+static __global__ void gated_residual_f32(const float * res, const float * b, const float * g, float * dst,
+        const int64_t E, const int64_t H, const int64_t T, const int b_has_h, const ggml_cuda_unary_chain_params p) {
+    const int64_t k      = E * H * T;
+    const int64_t tid    = (int64_t) blockIdx.x * blockDim.x + threadIdx.x;
+    const int64_t stride = (int64_t) blockDim.x * gridDim.x;
+    for (int64_t i = tid; i < k; i += stride) {
+        const int64_t e = i % E;
+        const int64_t h = (i / E) % H;
+        const int64_t t = i / (E * H);
+        float w = g[h + H * t];
+#pragma unroll
+        for (int j = 0; j < GGML_CUDA_UNARY_CHAIN_MAX; ++j) {
+            if (j < p.n) {
+                w = unary_chain_apply(w, p.op[j], p.a[j], p.b[j]);
+            }
+        }
+        const int64_t bi = b_has_h ? i : e + E * t;
+        dst[i] = __fadd_rn(res[i], __fmul_rn(b[bi], w));
+    }
+}
+
+void ggml_cuda_op_gated_residual(ggml_backend_cuda_context & ctx, ggml_tensor ** chain, int n_chain,
+        const ggml_tensor * res, const ggml_tensor * b, bool b_has_h, ggml_tensor * dst) {
+    ggml_cuda_unary_chain_params p;
+    unary_chain_fill_params(chain, n_chain, p);
+    const ggml_tensor * g = chain[0]->src[0];
+    const int64_t E = dst->ne[0], H = dst->ne[1], T = dst->ne[2];
+    const int64_t k = E * H * T;
+    const int64_t num_blocks = std::min<int64_t>((k + CUDA_NEG_BLOCK_SIZE - 1) / CUDA_NEG_BLOCK_SIZE, 65535);
+    gated_residual_f32<<<(int) num_blocks, CUDA_NEG_BLOCK_SIZE, 0, ctx.stream()>>>(
+        (const float *) res->data, (const float *) b->data, (const float *) g->data, (float *) dst->data,
+        E, H, T, b_has_h ? 1 : 0, p);
 }
