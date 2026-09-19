@@ -5520,7 +5520,7 @@ static int ggml_cuda_try_fuse_gated_residual(ggml_backend_cuda_context * cuda_ct
     if (res == nullptr) {
         return 0;
     }
-    for (const ggml_tensor * t : { (const ggml_tensor *) add, res, mul, b, gv, chain_end->src[0] }) {
+    for (const ggml_tensor * t : { (const ggml_tensor *) add, res, mul, b, gv, (const ggml_tensor *) chain_end->src[0] }) {
         if (t->type != GGML_TYPE_F32 || !ggml_is_contiguous(t) || t->ne[3] != 1) {
             return 0;
         }
