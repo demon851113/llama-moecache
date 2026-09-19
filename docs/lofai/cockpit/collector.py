@@ -476,6 +476,11 @@ def slow_loop():
             d["tailscale"] = {"online": None, "ip": HOST}
         dm = read_dmesg()
         d["dmesg"] = dm
+        if not first and int(time.time() // 30) % 10 == 0:  # 每 5 分鐘重讀靜態資訊（服務重啟換參數後面板才會更新）
+            try:
+                static.update(read_static())
+            except Exception:
+                pass
         if dm["last"] and dm["last"] != _dmesg_seen and not first:
             add_event("host", "crit", "dmesg: " + dm["last"])
         _dmesg_seen = dm["last"]
