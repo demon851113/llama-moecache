@@ -362,6 +362,9 @@ ggml_tensor * llama_model_qwen4exp::graph::build_hc_combine(
     const int64_t hc = hparams.dsv4_hc_mult;
     const int64_t nt = residual->ne[2];
 
+    // 先把區塊輸出展開進圖，否則下面的 ADD 展開時會把整個注意力／FFN 子圖插在 w 的鏈與 REPEAT 之間
+    ggml_build_forward_expand(gf, block_out);
+
     // 2*sigmoid centres the scatter weights on 1, so a zero injection is a plain residual add
     ggml_tensor * w = ggml_sigmoid(ctx0, ggml_scale(ctx0, inject, 1.0f / (float) hc));
     w = ggml_scale(ctx0, w, 2.0f);
