@@ -374,6 +374,8 @@ ggml_tensor * llama_model_qwen4exp::graph::build_hc_combine(
 
     ggml_tensor * cur = ggml_add(ctx0, residual, ggml_mul(ctx0, b, w));
     cb(cur, "hc_combine", il);
+    // 立刻展開，讓 REPEAT／MUL／ADD 緊跟在 w 的鏈後面（後端門控殘差融合要求相鄰）
+    ggml_build_forward_expand(gf, cur);
 
     return cur;
 }
