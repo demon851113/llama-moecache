@@ -30,6 +30,7 @@ h1,h2,h3{margin:0;font-weight:600}
 .pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:500;border:1px solid var(--line2);color:var(--muted);font-family:var(--mono)}
 .pill.g{color:var(--good);border-color:rgba(61,214,140,.4);background:rgba(61,214,140,.07)}
 .pill.b{color:var(--accent);border-color:var(--accent2);background:rgba(90,169,255,.08)}
+a.pill{text-decoration:none;cursor:pointer}a.pill:hover{border-color:var(--accent)}
 .pill.w{color:var(--warn);border-color:rgba(242,182,64,.5)}.pill.c{color:var(--crit);border-color:rgba(255,92,92,.5)}
 .blink{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pulse 1.2s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.25}}
@@ -123,7 +124,7 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
       <h1><span class="dot" id="dot"></span>主機A 駕駛台</h1>
       <span class="sub" id="sub">連線中…</span>
     </div>
-    <div class="sig" id="sig"></div>
+    <div class="sig"><span id="sig" style="display:contents"></span><a class="pill b" href="/logs">日誌查詢 ›</a></div>
   </header>
 
   <section class="quick" aria-label="快顯">
@@ -190,8 +191,8 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
       </table></div>
     </details>
 
-    <details class="panel he"><summary><h3>主機事件 <span>近期</span></h3></summary><div id="hev"></div></details>
-    <details class="panel me"><summary><h3>模型事件 <span>近期</span></h3></summary><div id="mev"></div></details>
+    <details class="panel he"><summary><h3>主機事件 <span>24 小時內</span></h3></summary><div id="hev"></div></details>
+    <details class="panel me"><summary><h3>模型事件 <span>24 小時內</span></h3></summary><div id="mev"></div></details>
   </main>
 </div>
 
@@ -241,8 +242,8 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
     tile('t-mtp', acc == null ? 'na' : acc < .5 ? 'wn' : 'ok', acc == null ? '—' : Math.round(acc * 100), '%', `近 ${ro.n || 0} 筆中位 · 本筆 ${lv.accept == null ? '—' : Math.round(lv.accept * 100) + '%'} · 草稿長 ${f1(ro.mean_len ?? lv.mean_len)}`);
 
     // 條
-    const pc = g.pcie_rx_gbs || 0;
-    bar('b-pcie', pc / 45 * 100, `${f1(pc)} / 45 GB/s`, pc > 40 ? 'warn' : '');
+    const pc = g.pcie_rx_gbs;
+    if (pc == null) bar('b-pcie', 0, 'amdgpu 無 PCIe 流量計數器', ''); else bar('b-pcie', pc / 45 * 100, `${f1(pc)} / 45 GB/s`, pc > 40 ? 'warn' : '');
     bar('b-util', g.util, `${f0(g.util)}%`);
     const total = (g.vram_total || 16303) / 1024, segs = [['cache', 'var(--accent)', '快取'], ['dense', 'var(--accent2)', 'dense'], ['mtp', 'var(--info)', 'MTP'], ['kv', 'var(--amber)', 'KV'], ['other', 'var(--dim)', '其他']];
     $('b-vram').innerHTML = segs.map(s => `<i style="width:${(vr[s[0]] || 0) / total * 100}%;background:${s[1]}"></i>`).join('');
@@ -252,7 +253,7 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
     const prePct = sl.prompt_tokens ? (sl.prompt_processed || 0) / sl.prompt_tokens * 100 : 0;
     bar('b-pre', pre ? prePct : (lr.prompt ? 100 : 0), pre ? `${f0(sl.prompt_processed)} / ${f0(sl.prompt_tokens)}` : lr.prompt ? `上一筆 ${f0(lr.prompt)} tok · ${f1(lr.ttft_s)} s` : '—', pre ? 'good' : 'good');
     bar('b-pfs', (ro.prefill_tps || 0) / 850 * 100, `${f0(ro.prefill_tps)} tok/s（中位）`);
-    $('m-legend').innerHTML = [`快取 ${d.cache_slots} 槽/層`, `草稿 n=${st.draft_n || '—'}`, `ub ${st.ub || '—'}`, `KV q8_0`].map(esc).map(x => `<span>${x}</span>`).join('');
+    $('m-legend').innerHTML = [`快取 ${d.cache_slots} 槽/層`, `草稿 n=${st.draft_n || '—'}`, `ub ${st.ub || '—'}`, `KV ${st.kv || 'q8_0'}`].map(esc).map(x => `<span>${x}</span>`).join('');
 
     // 規格
     const ts = sw.tailscale || {}, dm = sw.dmesg || {}, dk = sw.disks || [], nv = (sw.hwmon && sw.hwmon.nvme) || [];
@@ -264,7 +265,7 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
       ...dk.map((x, i) => [`NVMe ${x.mount}`, `${x.used_gb} G / ${x.size_gb} G${nv[i] != null ? ' · ' + nv[i].toFixed(0) + ' °C' : ''}`, '']),
       ['PLE 讀取', `${f0(d.proc && d.proc.read_mbs)} MB/s（SSD mmap）`, ''],
       ['Tailscale', `${ts.ip || '—'} · ${ts.online ? '直連' : '離線？'}`, ts.online ? 'g' : 'w'],
-      ['驅動 / CUDA', `${(st.driver || '').split(',')[0]} / 13.2`, ''],
+      ['驅動 / 平台', `${(st.driver || '').split(',')[0]} / ${st.platform || '—'}`, ''],
       ['核心', `${st.kernel || ''} · ${(st.os || '').replace(' LTS', '')}`, ''],
       ['systemd', `${d.service ? d.service.active : '—'} · 重啟 ${d.service ? d.service.restarts : '—'}`, svcOk ? 'g' : 'c'],
       ['dmesg 警示', dm.count ? `${dm.count} 筆 · ${dm.last.slice(0, 40)}` : '無', dm.count ? 'c' : 'g'],
@@ -322,7 +323,8 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
 
   function renderEvents(e) {
     const row = x => `<div class="ev-row"><span class="t">${hm(x.ts)}</span><span class="tag ${x.level}">${{info: '資訊', warn: '警告', crit: '錯誤', good: '恢復'}[x.level] || x.level}</span><span>${esc(x.text)}</span></div>`;
-    const ev = e.events || [];
+    const cut = Date.now() / 1000 - 86400;
+    const ev = (e.events || []).filter(x => x.ts > cut);
     const h = ev.filter(x => x.kind === 'host'), m = ev.filter(x => x.kind !== 'host');
     $('hev').innerHTML = h.length ? h.slice(0, 6).map(row).join('') : '<div class="empty">24 小時內沒有主機事件</div>';
     $('mev').innerHTML = m.length ? m.slice(0, 6).map(row).join('') : '<div class="empty">24 小時內沒有模型事件</div>';

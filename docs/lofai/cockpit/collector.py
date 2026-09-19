@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""主機A 駕駛台收集器：只用標準庫。
+"""主機A／主機B 駕駛台收集器：只用標準庫（GPU 讀取依廠牌分派：nvidia-smi 或 amdgpu sysfs）。
 
 每 2 秒讀 nvidia-smi、/proc、llama-server 的 /slots 與 log；每 30 秒讀慢速項（df、hwmon、tailscale、systemd、dmesg）。
 提供 /api/now、/api/history、/api/events、/api/push（mini-1 回報 hermes 路徑）與首頁。
 只綁 Tailscale IP；沒有驗證，靠 tailnet 隔離。
 """
+from urllib.parse import parse_qs, urlparse
 import collections, json, os, re, statistics, subprocess, threading, time, urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -14,6 +15,10 @@ LLAMA = os.environ.get("COCKPIT_LLAMA", "http://100.85.251.56:8080")
 LOG = os.environ.get("COCKPIT_LOG", "/data/src/server-current.log")
 SERVICE = os.environ.get("COCKPIT_SERVICE", "flash-next.service")
 STATE_DIR = os.environ.get("COCKPIT_STATE", "/data/src/cockpit")
+LABEL = os.environ.get("COCKPIT_LABEL", "主機A")
+LLAMA_BIN = os.environ.get("COCKPIT_LLAMA_BIN", "/data/src/llama-moecache/build/bin/llama-server")
+LLAMA_LD = os.environ.get("COCKPIT_LD", "/data/src/llama-moecache/build/bin:/usr/local/cuda/lib64")
+GPU_VENDOR = os.environ.get("COCKPIT_GPU", "auto")
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXPERT_MB = 1.97
 N_LAYERS, N_ATTN_LAYERS, KV_BYTES_PER_TOKEN_LAYER = 48, 12, 1088
@@ -40,13 +45,62 @@ def sh(cmd, timeout=8):
 
 
 def add_event(kind, level, text):
-    key = re.sub(r"\d{2}:\d{2}:\d{2}[,.]\d+", "", text)
+    key = re.sub(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}([,.]\d+)?", "", text)
     with _lock:
-        for e in list(events)[-8:]:
-            if re.sub(r"\d{2}:\d{2}:\d{2}[,.]\d+", "", e["text"]) == key and time.time() - e["ts"] < 3600:
+        for e in list(events)[-16:]:
+            if re.sub(r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}([,.]\d+)?", "", e["text"]) == key and time.time() - e["ts"] < 6 * 3600:
                 return
-        events.append({"ts": time.time(), "kind": kind, "level": level, "text": text})
+        rec = {"ts": time.time(), "kind": kind, "level": level, "text": text}
+        events.append(rec)
+    append_jsonl("events.jsonl", rec)
     save_state()
+
+
+def append_jsonl(name, rec):
+    try:
+        with open(os.path.join(STATE_DIR, name), "a") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception:
+        pass
+
+
+def read_jsonl(name, since=0, until=None, q="", limit=200, maxbytes=32 << 20):
+    """讀 jsonl 尾端（最多 maxbytes），依時間與關鍵字過濾，新的在前。"""
+    path = os.path.join(STATE_DIR, name)
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, 2); f.seek(max(0, f.tell() - maxbytes))
+            lines = f.read().decode("utf-8", "replace").splitlines()
+    except Exception:
+        return []
+    out = []
+    ql = q.lower()
+    for l in reversed(lines):
+        try:
+            r = json.loads(l)
+        except ValueError:
+            continue
+        ts = r.get("ts", 0)
+        if ts < since or (until and ts > until):
+            continue
+        if ql and ql not in json.dumps(r, ensure_ascii=False).lower():
+            continue
+        out.append(r)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def prune_jsonl(name, days=30):
+    path = os.path.join(STATE_DIR, name)
+    try:
+        cutoff = time.time() - days * 86400
+        keep = [l for l in open(path, encoding="utf-8", errors="replace") if '"ts": ' in l and float(l.split('"ts": ')[1].split(",")[0].rstrip("}")) > cutoff]
+        with open(path + ".tmp", "w") as f:
+            f.writelines(keep)
+        os.replace(path + ".tmp", path)
+    except Exception:
+        pass
 
 
 def save_state():
@@ -72,7 +126,7 @@ def load_state():
 
 
 # ---------- 快速項 ----------
-def read_gpu():
+def read_gpu_nvidia():
     out = sh(["nvidia-smi", "--query-gpu=temperature.gpu,power.draw,power.limit,fan.speed,clocks.sm,utilization.gpu,memory.used,memory.total,pcie.link.gen.current,pcie.link.width.current",
               "--format=csv,noheader,nounits"])
     g = {}
@@ -92,6 +146,80 @@ def read_gpu():
             except Exception:
                 pass
     return g
+
+
+_amd_dev = None
+
+
+def amd_device():
+    """找獨顯（vendor 0x1002、VRAM 最大者），回 (device 目錄, hwmon 目錄)。"""
+    global _amd_dev
+    if _amd_dev is not None:
+        return _amd_dev
+    best = None
+    for card in sorted(os.listdir("/sys/class/drm")):
+        d = f"/sys/class/drm/{card}/device"
+        try:
+            if not re.fullmatch(r"card\d+", card) or open(f"{d}/vendor").read().strip() != "0x1002":
+                continue
+            total = int(open(f"{d}/mem_info_vram_total").read())
+        except Exception:
+            continue
+        if best is None or total > best[1]:
+            best = (d, total)
+    hw = ""
+    if best:
+        try:
+            hw = os.path.join(best[0], "hwmon", sorted(os.listdir(os.path.join(best[0], "hwmon")))[0])
+        except Exception:
+            hw = ""
+    _amd_dev = (best[0] if best else "", hw)
+    return _amd_dev
+
+
+def _rd(path, default=None):
+    try:
+        return open(path).read().strip()
+    except Exception:
+        return default
+
+
+def read_gpu_amd():
+    d, hw = amd_device()
+    if not d:
+        return {}
+    g = {}
+    try:
+        g["temp"] = int(_rd(f"{hw}/temp1_input", "0")) / 1000            # edge
+        g["temp_hot"] = int(_rd(f"{hw}/temp2_input", "0")) / 1000        # junction
+        g["temp_mem"] = int(_rd(f"{hw}/temp3_input", "0")) / 1000
+        g["watt"] = int(_rd(f"{hw}/power1_average", "0")) / 1e6
+        g["watt_limit"] = int(_rd(f"{hw}/power1_cap", "0")) / 1e6
+        fan, fan_max = int(_rd(f"{hw}/fan1_input", "0")), int(_rd(f"{hw}/fan1_max", "0") or 0)
+        g["fan"] = round(fan / fan_max * 100) if fan_max else fan
+        g["clock"] = int(_rd(f"{hw}/freq1_input", "0")) / 1e6             # sclk MHz
+        g["util"] = float(_rd(f"{d}/gpu_busy_percent", "0"))
+        g["vram_used"] = int(_rd(f"{d}/mem_info_vram_used", "0")) / 2**20  # MiB，與 nvidia-smi 同單位
+        g["vram_total"] = int(_rd(f"{d}/mem_info_vram_total", "0")) / 2**20
+        speed = float((_rd(f"{d}/current_link_speed", "0") or "0").split()[0])
+        g["pcie_gen"] = {2.5: 1, 5.0: 2, 8.0: 3, 16.0: 4, 32.0: 5, 64.0: 6}.get(speed, 0)
+        g["pcie_width"] = int(_rd(f"{d}/current_link_width", "0") or 0)
+        g["pcie_rx_gbs"] = None   # amdgpu 沒有 PCIe 流量計數器
+        g["pcie_tx_gbs"] = None
+    except Exception:
+        pass
+    return g
+
+
+def gpu_vendor():
+    global GPU_VENDOR
+    if GPU_VENDOR == "auto":
+        GPU_VENDOR = "amd" if (amd_device()[0] and not sh(["which", "nvidia-smi"]).strip()) else "nvidia"
+    return GPU_VENDOR
+
+
+def read_gpu():
+    return read_gpu_amd() if gpu_vendor() == "amd" else read_gpu_nvidia()
 
 
 def read_cpu():
@@ -120,7 +248,7 @@ def read_cpu():
 
 
 def llama_pid():
-    out = sh(["pgrep", "-f", "build/bin/llama-server"])
+    out = sh(["pgrep", "-x", "llama-server"])  # 以程式名比對，build/ 與 build-hip/ 都適用
     for tok in out.split():
         if tok.isdigit():
             return int(tok)
@@ -207,6 +335,7 @@ def tail_log():
                     requests_ring.append(rec)
                     _minute_bucket["tps"].append(rec["tps"])
                     _minute_bucket["req"] += 1
+                append_jsonl("requests.jsonl", rec)
                 _live["prompt_tps"], _live["ttft"] = rec.get("prefill_tps"), rec.get("ttft_s")
             continue
         if RE_ERR.search(raw):
@@ -316,9 +445,16 @@ def read_hwmon():
 
 def read_dmesg():
     out = sh(["sudo", "-n", "dmesg", "--time-format", "iso"], timeout=10)
-    bad = [l for l in out.splitlines()[-400:] if re.search(r"NVRM: Xid|general protection|Oops|BUG:|segfault|fallen off the bus", l)
+    bad = [l for l in out.splitlines()[-400:] if re.search(r"NVRM: Xid|general protection|Oops|BUG:|segfault|fallen off the bus|amdgpu.*(GPU reset|timeout|hang|fault|error|IB test failed|ring .* timeout)|HSA_STATUS", l)
+           and not re.search(r"REG_WAIT timeout", l)
            and not re.search(r"traps: (ptxas|cicc|nvcc|cc1plus|python)", l)]
-    return {"count": len(bad), "last": bad[-1][-160:] if bad else ""}
+    last = ""
+    if bad:
+        # dmesg 每次呼叫重算 ISO 時間，微秒會抖動；只留到秒，否則同一條訊息每輪都像新事件
+        m = re.match(r"(\S+T\d{2}:\d{2}:\d{2})[,.]\d+\S*\s+(.*)", bad[-1])
+        last = (m.group(1).replace("T", " ") + " " + m.group(2)) if m else bad[-1]
+        last = last[:200]
+    return {"count": len(bad), "last": last}
 
 
 _dmesg_seen = ""
@@ -356,7 +492,18 @@ def slow_loop():
 
 def read_static():
     s = {}
-    s["driver"] = sh(["nvidia-smi", "--query-gpu=driver_version,name", "--format=csv,noheader"]).strip()
+    s["label"] = LABEL
+    s["vendor"] = gpu_vendor()
+    if s["vendor"] == "amd":
+        d, _ = amd_device()
+        bdf = os.path.basename(os.path.realpath(d)) if d else ""
+        name = sh(["lspci", "-s", bdf]).strip().split(": ", 1)[-1] if bdf else "AMD GPU"
+        rocm = _rd("/opt/rocm/.info/version", "") or ""
+        s["driver"] = f"amdgpu(核心內建), {name}"
+        s["platform"] = f"ROCm {rocm}".strip()
+    else:
+        s["driver"] = sh(["nvidia-smi", "--query-gpu=driver_version,name", "--format=csv,noheader"]).strip()
+        s["platform"] = "CUDA 13.2"
     s["kernel"] = sh(["uname", "-r"]).strip()
     s["os"] = sh(["lsb_release", "-ds"]).strip()
     cpu = sh(["lscpu"])
@@ -378,12 +525,14 @@ def read_static():
                 s["ub"] = cmd[i + 1]
             if a == "--spec-draft-n-max":
                 s["draft_n"] = cmd[i + 1]
+            if a in ("-ctk", "--cache-type-k"):
+                s["kv"] = cmd[i + 1]
         s["cwd"] = os.readlink(f"/proc/{pid}/cwd")
     except Exception:
         pass
     try:
-        env = dict(os.environ, LD_LIBRARY_PATH="/data/src/llama-moecache/build/bin:/usr/local/cuda/lib64")
-        ver = subprocess.run(["/data/src/llama-moecache/build/bin/llama-server", "--version"], capture_output=True, text=True, timeout=10, env=env)
+        env = dict(os.environ, LD_LIBRARY_PATH=LLAMA_LD)
+        ver = subprocess.run([LLAMA_BIN, "--version"], capture_output=True, text=True, timeout=10, env=env)
         ver = ver.stdout + ver.stderr
     except Exception:
         ver = ""
@@ -396,6 +545,50 @@ def read_static():
 
 
 # ---------- HTTP ----------
+def query_logs(qs):
+    src = (qs.get("src") or ["events"])[0]
+    q = (qs.get("q") or [""])[0].strip()[:200]
+    limit = max(1, min(500, int((qs.get("limit") or ["200"])[0] or 200)))
+    try:
+        since = float((qs.get("since") or ["0"])[0] or 0)
+        until = float((qs.get("until") or ["0"])[0] or 0) or None
+    except ValueError:
+        since, until = 0, None
+    if src in ("events", "requests"):
+        return {"src": src, "rows": read_jsonl(src + ".jsonl", since, until, q, limit)}
+    if src == "server":
+        try:
+            with open(LOG, "rb") as f:
+                f.seek(0, 2); f.seek(max(0, f.tell() - (8 << 20)))
+                lines = f.read().decode("utf-8", "replace").splitlines()
+        except Exception:
+            lines = []
+        ql = q.lower()
+        rows = [{"text": l[:300]} for l in reversed(lines) if not ql or ql in l.lower()][:limit]
+        return {"src": src, "rows": rows, "note": "伺服器日誌的時間是相對啟動的分.秒，不支援時間範圍"}
+    if src == "dmesg":
+        out = sh(["sudo", "-n", "dmesg", "--time-format", "iso"], timeout=10)
+        rows = []
+        ql = q.lower()
+        for l in reversed(out.splitlines()):
+            m = re.match(r"(\S+T\d{2}:\d{2}:\d{2})[,.]\d+\S*\s+(.*)", l)
+            if not m:
+                continue
+            try:
+                ts = time.mktime(time.strptime(m.group(1), "%Y-%m-%dT%H:%M:%S"))
+            except ValueError:
+                continue
+            if ts < since or (until and ts > until):
+                continue
+            if ql and ql not in l.lower():
+                continue
+            rows.append({"ts": ts, "text": m.group(2)[:300]})
+            if len(rows) >= limit:
+                break
+        return {"src": src, "rows": rows}
+    return {"error": "unknown src"}
+
+
 class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
@@ -411,9 +604,10 @@ class H(BaseHTTPRequestHandler):
 
     def do_GET(self):
         path = self.path.split("?")[0]
-        if path in ("/", "/index.html"):
+        pages = {"/": "index.html", "/index.html": "index.html", "/logs": "logs.html", "/logs.html": "logs.html"}
+        if path in pages:
             try:
-                data = open(os.path.join(HERE, "index.html"), "rb").read()
+                data = open(os.path.join(HERE, pages[path]), "rb").read()
             except Exception:
                 self.send_response(404); self.end_headers(); return
             self.send_response(200)
@@ -429,6 +623,8 @@ class H(BaseHTTPRequestHandler):
                 self._json({"minute": list(minute_ring)}); return
             if path == "/api/events":
                 self._json({"events": list(events)[-40:][::-1]}); return
+        if path == "/api/logs":
+            self._json(query_logs(parse_qs(urlparse(self.path).query))); return
         self._json({"error": "not found"}, 404)
 
     def do_POST(self):
@@ -450,6 +646,7 @@ class H(BaseHTTPRequestHandler):
 
 def main():
     load_state()
+    prune_jsonl("events.jsonl"); prune_jsonl("requests.jsonl")
     static.update(read_static())
     threading.Thread(target=fast_loop, daemon=True).start()
     threading.Thread(target=slow_loop, daemon=True).start()
