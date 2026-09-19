@@ -371,6 +371,7 @@ class _QwenMtpMixin:
 @ModelBase.register("Qwen3NextForCausalLM")
 @ModelBase.example("Qwen/Qwen3-Next-80B-A3B-Instruct")
 class Qwen3NextModel(_QwenMtpMixin, Qwen2MoeModel):
+    norm_pre_offset: bool = False
     model_arch = gguf.MODEL_ARCH.QWEN3NEXT
 
     def set_gguf_parameters(self):
@@ -400,7 +401,9 @@ class Qwen3NextModel(_QwenMtpMixin, Qwen2MoeModel):
         elif "conv1d" in name:
             data_torch = data_torch.squeeze()
         elif name.endswith("norm.weight") and not name.endswith("linear_attn.norm.weight"):
-            data_torch = data_torch + 1
+            # HF 原版 norm 權重以 0 為中心、前向時加 1；MLX 匯出的權重已加過 1，用 --norm-pre-offset 跳過
+            if not self.norm_pre_offset:
+                data_torch = data_torch + 1
 
         if "in_proj_qkvz.weight" in name:
             # original order:  [q, k, v, z] * head_count

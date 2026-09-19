@@ -126,6 +126,10 @@ def parse_args() -> argparse.Namespace:
         help="Exclude NextN speculative draft tensors from the converted GGUF. Pair with --mtp or --dspark on a second run to publish target and draft as two files.",
     )
     parser.add_argument(
+        "--norm-pre-offset", action="store_true",
+        help="Qwen3-Next 系列：來源權重的 norm 已含 +1 偏移（MLX 匯出常見），轉檔時不再加 1",
+    )
+    parser.add_argument(
         "--mtp-shared-embd", action="store_true",
         help="With --mtp, leave the token embeddings, output norm and LM head out of the draft and take them from the target model at load time. Much smaller draft, but it needs a llama.cpp new enough to read it.",
     )
@@ -285,6 +289,12 @@ def main() -> None:
                 model_class.no_mtp = True
             if args.mtp:
                 model_class.mtp_only = True
+
+        if args.norm_pre_offset:
+            if not hasattr(model_class, "norm_pre_offset"):
+                logger.error("--norm-pre-offset is not supported for %s", model_architecture)
+                sys.exit(1)
+            model_class.norm_pre_offset = True
 
         if args.mtp_shared_embd:
             if not args.mtp:
