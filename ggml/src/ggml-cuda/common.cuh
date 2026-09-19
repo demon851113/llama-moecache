@@ -38,6 +38,10 @@
 #include "vendors/musa.h"
 #else
 #include "vendors/cuda.h"
+// SCALE（CUDA→AMD 工具鏈）的 cuda.h 沒有 CUstreamWaitValue 旗標列舉；值與 CUDA 相同
+#ifndef CU_STREAM_WAIT_VALUE_EQ
+#define CU_STREAM_WAIT_VALUE_EQ 0x1
+#endif
 #endif // defined(GGML_USE_HIP)
 
 #define STRINGIZE_IMPL(...) #__VA_ARGS__
