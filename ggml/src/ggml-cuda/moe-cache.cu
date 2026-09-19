@@ -5483,7 +5483,7 @@ struct ggml_cuda_moe_grouped_context::impl {
             cudaStream_t compute_stream,
             bool prefill_resident_certified = false,
             uint32_t top_k = 1) const {
-#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#if defined(GGML_USE_MUSA)
         GGML_UNUSED(snapshot);
         GGML_UNUSED(compute_stream);
         GGML_UNUSED(prefill_resident_certified);
@@ -5720,7 +5720,7 @@ struct ggml_cuda_moe_grouped_context::impl {
     }
 
     bool cold_reset_grouped_resource(grouped_resource & resource, cudaStream_t compute_stream) const {
-#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#if defined(GGML_USE_MUSA)
         GGML_UNUSED(resource);
         GGML_UNUSED(compute_stream);
         return false;
@@ -8280,7 +8280,7 @@ ggml_cuda_moe_grouped_decode_result ggml_cuda_moe_grouped_context::prepare_decod
             return GGML_CUDA_MOE_GROUPED_DECODE_FALLBACK;
         }
     }
-#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#if defined(GGML_USE_MUSA)
     return GGML_CUDA_MOE_GROUPED_DECODE_FALLBACK;
 #else
     const ggml_tensor * ids = key.ids.tensor;
@@ -10067,7 +10067,7 @@ bool ggml_cuda_moe_grouped_context::activate_graph_resources(
         ggml_cuda_moe_graph_dispatch_mode mode,
         uint64_t expected_fingerprint,
         const std::vector<std::weak_ptr<void>> * resource_witnesses) {
-#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#if defined(GGML_USE_MUSA)
     GGML_UNUSED(execution);
     GGML_UNUSED(mode);
     GGML_UNUSED(expected_fingerprint);
@@ -10616,7 +10616,7 @@ bool ggml_cuda_moe_grouped_context::prefill_add_id_source(
     if (source != nullptr) {
         *source = nullptr;
     }
-#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#if defined(GGML_USE_MUSA)
     GGML_UNUSED(execution);
     GGML_UNUSED(node);
     GGML_UNUSED(stream);
@@ -10712,7 +10712,7 @@ bool ggml_cuda_moe_grouped_context::finish_prefill_add_id(
         const ggml_tensor * node,
         ggml_cuda_moe_stream_t stream,
         const float * source) const {
-#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#if defined(GGML_USE_MUSA)
     GGML_UNUSED(execution);
     GGML_UNUSED(node);
     GGML_UNUSED(stream);
@@ -10757,7 +10757,7 @@ ggml_cuda_moe_grouped_decode_result ggml_cuda_moe_grouped_context::prepare_host_
         const ggml_cuda_moe_graph_binding & binding,
         const ggml_tensor * node,
         cudaStream_t stream) {
-#if defined(GGML_USE_HIP) || defined(GGML_USE_MUSA)
+#if defined(GGML_USE_MUSA)
     GGML_UNUSED(group);
     GGML_UNUSED(binding);
     GGML_UNUSED(node);

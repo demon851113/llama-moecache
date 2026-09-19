@@ -8332,7 +8332,7 @@ static bool ggml_backend_cuda_flash_attn_causal_prefix_supported(ggml_backend_de
 #endif
 }
 
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+#if !defined(GGML_USE_MUSA)
 static bool ggml_backend_cuda_required_grouped_execution_supported(ggml_backend_t backend) {
     return backend != nullptr && ggml_backend_is_cuda(backend);
 }
@@ -8397,7 +8397,7 @@ static void * ggml_backend_cuda_reg_get_proc_address(ggml_backend_reg_t reg, con
     if (strcmp(name, GGML_BACKEND_MOE_CANDIDATE_REPLACE_V2_PROC_NAME) == 0) {
         return (void *)ggml_backend_cuda_moe_candidate_replace_v2;
     }
-#if !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+#if !defined(GGML_USE_MUSA)
     if (strcmp(name, GGML_BACKEND_REQUIRED_GROUPED_EXECUTION_SUPPORTED_PROC_NAME) == 0) {
         return (void *)ggml_backend_cuda_required_grouped_execution_supported;
     }
