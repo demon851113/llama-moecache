@@ -7968,6 +7968,12 @@ void ggml_cuda_moe_grouped_context::configure_early_router(
         if (group.strategy != GGML_CUDA_MOE_EXECUTION_STRATEGY_DEVICE_DIRECT ||
                 group.key.ids.ne[1] != 1 || group.key.ids.ne[0] > MOE_PREPACK_ROUTES || group.key.ids.ne[2] != 1 || group.key.ids.ne[3] != 1 ||
                 group.stream != stream || group.first_reader == nullptr || group.key.candidate.group_index >= impl_->resources.size()) {
+            static const bool why = getenv("GGML_CUDA_MOE_PREPACK_DEBUG") != nullptr;
+            if (why) {
+                fprintf(stderr, "moe-early-router: group=%u skipped strategy=%u rows=%lld top_k=%lld same_stream=%d reader=%d\n",
+                    index, group.strategy, (long long) group.key.ids.ne[1], (long long) group.key.ids.ne[0],
+                    (int) (group.stream == stream), (int) (group.first_reader != nullptr));
+            }
             continue;
         }
         const auto & resource = impl_->resources[group.key.candidate.group_index];
