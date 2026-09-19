@@ -42,6 +42,11 @@
 #ifndef CU_STREAM_WAIT_VALUE_EQ
 #define CU_STREAM_WAIT_VALUE_EQ 0x1
 #endif
+#if defined(__SCALE_CUDA_VER_MAJOR__) && !defined(GGML_USE_HIP) && !defined(GGML_USE_MUSA)
+// SCALE 完全沒有 cuStreamWaitValue32（標頭與 libcuda 都無）：給一個回報「不支援」的替身，
+// 讓 moe-cache 的執行期探測失敗後改走事件分段路徑（與 ROCm 圖擷取的處理相同）
+static inline CUresult cuStreamWaitValue32(CUstream, CUdeviceptr, unsigned int, unsigned int) { return CUDA_ERROR_NOT_SUPPORTED; }
+#endif
 #endif // defined(GGML_USE_HIP)
 
 #define STRINGIZE_IMPL(...) #__VA_ARGS__
