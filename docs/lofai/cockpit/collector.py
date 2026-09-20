@@ -127,25 +127,33 @@ def load_state():
 
 # ---------- 快速項 ----------
 def read_gpu_nvidia():
-    out = sh(["nvidia-smi", "--query-gpu=temperature.gpu,power.draw,power.limit,fan.speed,clocks.sm,utilization.gpu,memory.used,memory.total,pcie.link.gen.current,pcie.link.width.current",
+    """回傳每張 nvidia GPU 一筆 dict 的 list（依 nvidia-smi index 排序）。"""
+    out = sh(["nvidia-smi", "--query-gpu=index,name,temperature.gpu,power.draw,power.limit,fan.speed,clocks.sm,utilization.gpu,memory.used,memory.total,pcie.link.gen.current,pcie.link.width.current",
               "--format=csv,noheader,nounits"])
-    g = {}
-    try:
-        v = [x.strip() for x in out.strip().split(",")]
-        g = {"temp": float(v[0]), "watt": float(v[1]), "watt_limit": float(v[2]), "fan": float(v[3]), "clock": float(v[4]),
-             "util": float(v[5]), "vram_used": float(v[6]), "vram_total": float(v[7]), "pcie_gen": int(v[8]), "pcie_width": int(v[9])}
-    except Exception:
-        pass
+    gpus = []
+    for line in out.strip().splitlines():
+        if not line.strip():
+            continue
+        try:
+            v = [x.strip() for x in line.split(",")]
+            gpus.append({"index": int(v[0]), "name": v[1], "temp": float(v[2]), "watt": float(v[3]), "watt_limit": float(v[4]),
+                         "fan": float(v[5]), "clock": float(v[6]), "util": float(v[7]), "vram_used": float(v[8]),
+                         "vram_total": float(v[9]), "pcie_gen": int(v[10]), "pcie_width": int(v[11])})
+        except Exception:
+            continue
     dm = sh(["nvidia-smi", "dmon", "-s", "t", "-c", "1"], timeout=6)
+    by_idx = {gp["index"]: gp for gp in gpus}
     for line in dm.splitlines():
         if line.strip() and not line.startswith("#"):
             p = line.split()
             try:
-                g["pcie_rx_gbs"] = float(p[1]) / 1000.0
-                g["pcie_tx_gbs"] = float(p[2]) / 1000.0
+                idx = int(p[0])
+                if idx in by_idx:
+                    by_idx[idx]["pcie_rx_gbs"] = float(p[1]) / 1000.0
+                    by_idx[idx]["pcie_tx_gbs"] = float(p[2]) / 1000.0
             except Exception:
                 pass
-    return g
+    return gpus
 
 
 _amd_dev = None
@@ -219,7 +227,14 @@ def gpu_vendor():
 
 
 def read_gpu():
-    return read_gpu_amd() if gpu_vendor() == "amd" else read_gpu_nvidia()
+    """回傳 (gpus, g0)：gpus 是每張卡一筆 dict 的 list，g0 是第一張卡的 dict
+    （沿用舊的單卡結構，供 history/24h 圖與其他讀 state.json 的東西用）。"""
+    if gpu_vendor() == "amd":
+        g = read_gpu_amd()
+        gpus = [dict(g, index=0)] if g else []
+    else:
+        gpus = read_gpu_nvidia()
+    return gpus, (gpus[0] if gpus else {})
 
 
 def read_cpu():
@@ -356,7 +371,7 @@ def fast_loop():
     prev_restarts = None
     while True:
         t0 = time.time()
-        g = read_gpu()
+        gpus, g = read_gpu()
         c = read_cpu()
         pid = llama_pid()
         p = read_proc(pid)
@@ -396,7 +411,7 @@ def fast_loop():
         with _lock:
             now.update({
                 "rolling": rolling, "last_request": (recent10[-1] if recent10 else None),
-                "ts": time.time(), "gpu": g, "cpu": c, "proc": p, "pid": pid,
+                "ts": time.time(), "gpu": g, "gpus": gpus, "cpu": c, "proc": p, "pid": pid,
                 "service": {"active": svc.get("ActiveState"), "restarts": svc.get("NRestarts"), "since": svc.get("ActiveEnterTimestamp")},
                 "health": bool(health and health.get("status") == "ok"),
                 "slot": {"state": state, "n_ctx": n_ctx, "ctx_used": ctx_used, "prompt_tokens": slot.get("n_prompt_tokens"),
@@ -507,7 +522,10 @@ def read_static():
         s["driver"] = f"amdgpu(核心內建), {name}"
         s["platform"] = f"ROCm {rocm}".strip()
     else:
-        s["driver"] = sh(["nvidia-smi", "--query-gpu=driver_version,name", "--format=csv,noheader"]).strip()
+        drv_out = sh(["nvidia-smi", "--query-gpu=driver_version,name", "--format=csv,noheader"]).strip()
+        drv_lines = [l for l in drv_out.splitlines() if l.strip()]
+        s["driver"] = drv_lines[0] if drv_lines else ""
+        s["gpu_names"] = [l.split(",", 1)[1].strip() for l in drv_lines if "," in l]
         s["platform"] = "CUDA 13.2"
     s["kernel"] = sh(["uname", "-r"]).strip()
     s["os"] = sh(["lsb_release", "-ds"]).strip()
