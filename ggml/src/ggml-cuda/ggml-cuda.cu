@@ -747,6 +747,14 @@ static uint64_t ggml_backend_cuda_trim_transient_pools(ggml_backend_t backend) {
             }
         }
     }
+
+    // 已擷取的 CUDA graph 內含指向池內暫存區的 kernel 參數（擷取當下由 pool 配置、之後歸還但位址不變）。
+    // 池一旦 unmap，同形狀 batch 重放舊 graph 就會寫到已解除映射的位址（NVRM Xid 31 MMU write fault，
+    // 2026-09-21 主機A：MTP 草稿 context 在 max_tokens≤2 的請求後連續崩潰）。釋放了記憶體就丟掉 graph 快取，下次重新擷取。
+    if (released > 0 && !cuda_ctx->cuda_graphs.empty()) {
+        ggml_cuda_set_device(cuda_ctx->device);
+        cuda_ctx->cuda_graphs.clear();
+    }
     return released;
 }
 
