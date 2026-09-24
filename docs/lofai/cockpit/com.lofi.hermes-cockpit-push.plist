@@ -2,15 +2,15 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>Label</key><string>com.lofai.cockpit-push</string>
+  <key>Label</key><string>com.lofi.hermes-cockpit-push</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/python3</string>
-    <string>/Users/lofai/llm-failover/cockpit_push.py</string>
+    <string>/Users/lofi/cockpit-push/hermes_push.py</string>
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>StandardOutPath</key><string>/Users/lofai/llm-failover/cockpit_push.log</string>
-  <key>StandardErrorPath</key><string>/Users/lofai/llm-failover/cockpit_push.log</string>
+  <key>StandardOutPath</key><string>/Users/lofi/cockpit-push/push.log</string>
+  <key>StandardErrorPath</key><string>/Users/lofi/cockpit-push/push.log</string>
 </dict>
 </plist>

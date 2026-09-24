@@ -31,6 +31,8 @@ h1,h2,h3{margin:0;font-weight:600}
 .pill.g{color:var(--good);border-color:rgba(61,214,140,.4);background:rgba(61,214,140,.07)}
 .pill.b{color:var(--accent);border-color:var(--accent2);background:rgba(90,169,255,.08)}
 a.pill{text-decoration:none;cursor:pointer}a.pill:hover{border-color:var(--accent)}
+button.pill{background:transparent;cursor:pointer;line-height:inherit}button.pill:hover{border-color:var(--accent)}button.pill:disabled{cursor:wait;opacity:.6}
+button.pill:focus-visible,a.pill:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .pill.w{color:var(--warn);border-color:rgba(242,182,64,.5)}.pill.c{color:var(--crit);border-color:rgba(255,92,92,.5)}
 .blink{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pulse 1.2s ease-in-out infinite}
 @keyframes pulse{50%{opacity:.25}}
@@ -45,6 +47,7 @@ a.pill{text-decoration:none;cursor:pointer}a.pill:hover{border-color:var(--accen
 .panel h3{font-size:11px;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;display:flex;justify-content:space-between}
 .panel h3 span{font-family:var(--mono);font-weight:400;color:var(--dim);letter-spacing:0;text-transform:none}
 .tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tiles.g4{grid-template-columns:repeat(2,1fr)}
 .tile{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:10px 12px;position:relative;overflow:hidden;min-height:78px}
 .tile::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--stripe,var(--line2))}
 .tile .k{font-size:11px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase}
@@ -124,7 +127,7 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
       <h1><span class="dot" id="dot"></span>主機A 駕駛台</h1>
       <span class="sub" id="sub">連線中…</span>
     </div>
-    <div class="sig"><span id="sig" style="display:contents"></span><a class="pill b" href="/logs">日誌查詢 ›</a></div>
+    <div class="sig"><span id="sig" style="display:contents"></span><span id="comfy" style="display:contents"></span><a class="pill b" href="/logs">日誌查詢 ›</a></div>
   </header>
 
   <section class="quick" aria-label="快顯">
@@ -141,8 +144,7 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
     <div class="colhead mh"><h2><i style="background:var(--accent)"></i>模型</h2><span id="m-sub">—</span></div>
 
     <details class="panel ht"><summary><h3>現況 <span>每 2 秒</span></h3></summary>
-      <div class="tiles">
-        <div class="tile" id="t-gpu"><div class="k">GPU 溫度</div><div class="v">—</div><div class="s"></div></div>
+      <div class="tiles" id="ht-tiles">
         <div class="tile" id="t-ram"><div class="k">主記憶體</div><div class="v">—</div><div class="s"></div></div>
         <div class="tile" id="t-cpu"><div class="k">CPU 負載</div><div class="v">—</div><div class="s"></div></div>
       </div>
@@ -156,12 +158,7 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
     </details>
 
     <details class="panel hb"><summary><h3>資源 <span>PCIe 是天花板</span></h3></summary>
-      <div class="bars">
-        <div class="bar"><span class="lab">PCIe 搬運</span><div class="track"><div class="fill warn" id="b-pcie" style="width:0"></div><i class="ceil" style="left:100%"></i></div><span class="val" id="b-pcie-v">—</span></div>
-        <div class="bar"><span class="lab">GPU 忙碌</span><div class="track"><div class="fill" id="b-util" style="width:0"></div></div><span class="val" id="b-util-v">—</span></div>
-        <div class="bar"><span class="lab">VRAM</span><div class="stack" id="b-vram"></div><span class="val" id="b-vram-v">—</span></div>
-        <div class="bar" style="align-items:start"><span></span><div class="legend" id="b-vram-l"></div></div>
-      </div>
+      <div class="bars" id="hb-bars"></div>
     </details>
     <details class="panel mb"><summary><h3>運作 <span>目前這一筆</span></h3></summary>
       <div class="bars">
@@ -172,7 +169,7 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
       </div>
     </details>
 
-    <details class="panel hc"><summary><h3>GPU 溫度與功耗 · 24 小時 <span>°C · W</span></h3></summary>
+    <details class="panel hc"><summary><h3>GPU 溫度與功耗 · 24 小時 <span id="hc-sub">°C · W</span></h3></summary>
       <svg class="chart" id="c2" role="img" aria-label="近 24 小時 GPU 溫度與功耗"></svg>
       <div class="stat" id="s2"></div>
     </details>
@@ -209,25 +206,77 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
   const bar = (id, pct, v, cls) => { const f = $(id); f.style.width = Math.max(0, Math.min(100, pct || 0)) + '%'; if (cls) f.className = 'fill ' + cls; $(id + '-v').textContent = v; };
   let lastOk = 0, history = null;
 
+  const gpuShort = name => String(name || '').replace(/^NVIDIA GeForce RTX /, '');
+
+  // ComfyUI 開關（3060 生圖）：狀態膠囊 + 啟動/停止；運行中多一顆「開啟 ›」
+  let comfyBusy = false, comfyShown = '';
+  function renderComfy(cf) {
+    if (!cf || comfyBusy) return;
+    const a = cf.active, key = a + cf.url;
+    if (key === comfyShown) return;
+    comfyShown = key;
+    const on = a === 'active', mid = a === 'activating' || a === 'deactivating';
+    const label = on ? 'ComfyUI 運行中 · 停止' : mid ? `ComfyUI ${a === 'activating' ? '啟動中' : '停止中'}…` : 'ComfyUI 已關閉 · 啟動';
+    $('comfy').innerHTML =
+      `<button type="button" class="pill ${on ? 'g' : mid ? 'w' : ''}" id="comfy-btn" ${mid ? 'disabled' : ''} aria-label="${esc(label)}">${mid ? '<i class="blink"></i>' : ''}${esc(label)}</button>` +
+      (on ? `<a class="pill b" href="${esc(cf.url)}" target="_blank" rel="noopener">開啟 ComfyUI ›</a>` : '');
+    const btn = $('comfy-btn');
+    if (btn && !mid) btn.addEventListener('click', () => toggleComfy(on ? 'stop' : 'start'));
+  }
+  async function toggleComfy(action) {
+    if (action === 'stop' && !confirm('停止 ComfyUI？正在生成的圖會中斷。')) return;
+    comfyBusy = true;
+    const btn = $('comfy-btn'); if (btn) { btn.disabled = true; btn.innerHTML = `<i class="blink"></i>${action === 'start' ? '啟動中…' : '停止中…'}`; }
+    try {
+      const r = await fetch('/api/comfyui', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-Cockpit': '1'}, body: JSON.stringify({action})});
+      const j = await r.json();
+      if (!j.ok) alert('ComfyUI 操作失敗：' + (j.error || r.status));
+    } catch (e) { alert('ComfyUI 操作失敗：連不到收集器'); }
+    comfyBusy = false; comfyShown = '';
+    tickNow();
+  }
+
   function renderNow(d) {
     const g = d.gpu || {}, c = d.cpu || {}, sl = d.slot || {}, lv = d.live || {}, st = d.static || {}, sw = d.slow || {}, pe = d.peer || {}, vr = d.vram || {};
+    const gpus = (d.gpus && d.gpus.length) ? d.gpus : (g.temp != null ? [g] : []);
     const svcOk = d.service && d.service.active === 'active' && d.health;
-    const peerFresh = pe.ts && (Date.now() / 1000 - pe.ts) < 40;
-    const route = !peerFresh ? '未回報' : (pe.primary_up ? '主機A' : 'mini-1 27B');
+    // mini-2 每 30 秒回報一次；超過 90 秒沒收到視為未回報
+    const peerFresh = pe.ts && (Date.now() / 1000 - pe.ts) < 90;
+    const route = !peerFresh ? '未回報' : !pe.hermes_up ? '已停止' : (pe.route || '未知');
     $('dot').className = 'dot ' + (svcOk ? '' : 'bad');
     $('sub').textContent = `lofai-worker01 · ${new Date(d.ts * 1000).toLocaleString('zh-TW', {hour12: false})}`;
     const gen = sl.state === 'generating', pre = sl.state === 'prefill';
     $('sig').innerHTML =
       `<span class="pill ${svcOk ? 'g' : 'c'}">服務 ${svcOk ? '正常' : (d.service && d.service.active) || '未知'}${sw.uptime_s ? ' · 開機 ' + dur(sw.uptime_s) : ''}</span>` +
-      `<span class="pill ${!peerFresh ? '' : pe.primary_up ? 'g' : 'w'}">hermes → ${route}</span>` +
+      `<span class="pill ${!peerFresh ? '' : !pe.hermes_up ? 'c' : pe.route === '主機A' ? 'g' : 'w'}">hermes → ${esc(route)}</span>` +
       (gen ? `<span class="pill b"><i class="blink"></i>生成中 ${f1(lv.tps)} tok/s</span>` : pre ? `<span class="pill b"><i class="blink"></i>讀 prompt ${f0(sl.prompt_processed)} / ${f0(sl.prompt_tokens)}</span>` : `<span class="pill">閒置</span>`);
+    renderComfy(d.comfy);
     $('h-sub').textContent = `${(st.cpu_model || '').replace('AMD ', '').replace(' 16-Core Processor', '')} · ${(st.driver || '').split(',').slice(1).join('').trim()} · ${f0(c.mem_total_gb)}G DDR5`;
+    const gpu0Name = (st.gpu_names && st.gpu_names[0]) || (gpus[0] && gpus[0].name) || '';
+    const hcSub = $('hc-sub'); if (hcSub) hcSub.textContent = `°C · W${gpu0Name ? ' · ' + gpuShort(gpu0Name) : ''}`;
     $('m-sub').textContent = `${st.alias || st.model || ''} · moe-cache ${st.commit || ''}`;
     $('slot-sub').textContent = `slot 0 / 1 · task ${sl.task ?? '—'}`;
 
-    // 主機三格
+    // 主機格：每張 GPU 一格 + RAM + CPU
     const tcls = g.temp >= 80 ? 'cr' : g.temp >= 72 ? 'wn' : 'ok';
-    tile('t-gpu', tcls, f0(g.temp), '°C', `${f0(g.watt)} / ${f0(g.watt_limit)} W · 風扇 ${f0(g.fan)}% · ${f0(g.clock)} MHz`);
+    const htTiles = $('ht-tiles');
+    htTiles.classList.toggle('g4', gpus.length > 1);
+    const wantIds = gpus.map((_, i) => `t-gpu${i}`);
+    for (const el of [...htTiles.querySelectorAll('[id^="t-gpu"]')]) {
+      if (!wantIds.includes(el.id)) el.remove();
+    }
+    gpus.forEach((gp, i) => {
+      const id = `t-gpu${i}`;
+      if (!$(id)) {
+        const div = document.createElement('div');
+        div.className = 'tile'; div.id = id;
+        div.innerHTML = '<div class="k"></div><div class="v">—</div><div class="s"></div>';
+        htTiles.insertBefore(div, htTiles.children[i] || htTiles.firstChild);
+      }
+      const cls = gp.temp >= 80 ? 'cr' : gp.temp >= 72 ? 'wn' : 'ok';
+      $(id).querySelector('.k').textContent = `GPU${gp.index ?? i} 溫度 · ${gpuShort(gp.name)}`;
+      tile(id, cls, f0(gp.temp), '°C', `${f0(gp.watt)} / ${f0(gp.watt_limit)} W · 風扇 ${f0(gp.fan)}% · ${f0(gp.clock)} MHz · VRAM ${f1(gp.vram_used / 1024)}/${f1(gp.vram_total / 1024)}G`);
+    });
     const ramPct = c.mem_total_gb ? c.mem_used_gb / c.mem_total_gb : 0;
     tile('t-ram', ramPct > .93 ? 'wn' : 'ok', f1(c.mem_used_gb), `/ ${f0(c.mem_total_gb)} G`, `llama-server RSS ${f1(d.proc && d.proc.rss_gb)} G · DIMM ${sw.hwmon && sw.hwmon.dimm && sw.hwmon.dimm.length ? Math.max(...sw.hwmon.dimm).toFixed(0) + ' °C' : '—'}`);
     tile('t-cpu', (c.load1 || 0) > 8 ? 'wn' : 'ok', f1(c.load1), `/ ${c.ncpu || '—'} 核`, `${f0(sw.hwmon && sw.hwmon.cpu_temp)} °C · 使用率 ${f1(c.util)}%`);
@@ -241,14 +290,39 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
     const acc = ro.accept ?? lv.accept;
     tile('t-mtp', acc == null ? 'na' : acc < .5 ? 'wn' : 'ok', acc == null ? '—' : Math.round(acc * 100), '%', `近 ${ro.n || 0} 筆中位 · 本筆 ${lv.accept == null ? '—' : Math.round(lv.accept * 100) + '%'} · 草稿長 ${f1(ro.mean_len ?? lv.mean_len)}`);
 
-    // 條
-    const pc = g.pcie_rx_gbs || 0;
-    bar('b-pcie', pc / 45 * 100, `${f1(pc)} / 45 GB/s`, pc > 40 ? 'warn' : '');
-    bar('b-util', g.util, `${f0(g.util)}%`);
-    const total = (g.vram_total || 16303) / 1024, segs = [['cache', 'var(--accent)', '快取'], ['dense', 'var(--accent2)', 'dense'], ['mtp', 'var(--info)', 'MTP'], ['kv', 'var(--amber)', 'KV'], ['other', 'var(--dim)', '其他']];
-    $('b-vram').innerHTML = segs.map(s => `<i style="width:${(vr[s[0]] || 0) / total * 100}%;background:${s[1]}"></i>`).join('');
-    $('b-vram-v').textContent = `${f1(g.vram_used / 1024)} / ${f1(total)} GB`;
-    $('b-vram-l').innerHTML = segs.map(s => `<span><b style="background:${s[1]}"></b>${s[2]} ${f1(vr[s[0]])}</span>`).join('') + `<span><b style="border:1px solid var(--line2)"></b>留白 ${f1(vr.free)}</span>`;
+    // 條：PCIe / GPU 忙碌 每卡一條；VRAM 疊層條沿用 GPU0（模型顯存細節）+ 其餘卡簡單用量條
+    const multi = gpus.length > 1;
+    const PCIE_CEIL = { 0: 45 }; // GPU0 (Gen5 x16) 天花板 45GB/s；其餘依 gen/width 估算
+    const pcieCeil = gp => {
+      if ((gp.index ?? 0) === 0) return PCIE_CEIL[0];
+      if (gp.pcie_gen >= 4 && gp.pcie_width === 4) return 7;
+      return 45;
+    };
+    const total0 = (g.vram_total || 16303) / 1024, pc0 = g.pcie_rx_gbs || 0, segs = [['cache', 'var(--accent)', '快取'], ['dense', 'var(--accent2)', 'dense'], ['mtp', 'var(--info)', 'MTP'], ['kv', 'var(--amber)', 'KV'], ['other', 'var(--dim)', '其他']];
+    const hbBars = $('hb-bars');
+    let barsHtml = '';
+    gpus.forEach((gp, i) => {
+      const lab = multi ? ` · ${gpuShort(gp.name)}` : '';
+      const pc = gp.pcie_rx_gbs || 0, ceil = pcieCeil(gp);
+      barsHtml += `<div class="bar"><span class="lab">PCIe${lab}</span><div class="track"><div class="fill warn" id="b-pcie${i}" style="width:${Math.max(0, Math.min(100, pc / ceil * 100))}%"></div><i class="ceil" style="left:100%"></i></div><span class="val" id="b-pcie${i}-v">${f1(pc)} / ${ceil} GB/s</span></div>`;
+    });
+    gpus.forEach((gp, i) => {
+      const lab = multi ? ` · ${gpuShort(gp.name)}` : '';
+      barsHtml += `<div class="bar"><span class="lab">GPU 忙碌${lab}</span><div class="track"><div class="fill" id="b-util${i}" style="width:${Math.max(0, Math.min(100, gp.util || 0))}%"></div></div><span class="val" id="b-util${i}-v">${f0(gp.util)}%</span></div>`;
+    });
+    gpus.forEach((gp, i) => {
+      const lab = multi ? ` · ${gpuShort(gp.name)}` : '';
+      if (i === 0) {
+        const segHtml = segs.map(s => `<i style="width:${(vr[s[0]] || 0) / total0 * 100}%;background:${s[1]}"></i>`).join('');
+        barsHtml += `<div class="bar"><span class="lab">VRAM${lab}</span><div class="stack" id="b-vram${i}">${segHtml}</div><span class="val" id="b-vram${i}-v">${f1(gp.vram_used / 1024)} / ${f1(total0)} GB</span></div>`;
+        const legend = segs.map(s => `<span><b style="background:${s[1]}"></b>${s[2]} ${f1(vr[s[0]])}</span>`).join('') + `<span><b style="border:1px solid var(--line2)"></b>留白 ${f1(vr.free)}</span>`;
+        barsHtml += `<div class="bar" style="align-items:start"><span></span><div class="legend" id="b-vram${i}-l">${legend}</div></div>`;
+      } else {
+        const tot = (gp.vram_total || 12288) / 1024, used = (gp.vram_used || 0) / 1024;
+        barsHtml += `<div class="bar"><span class="lab">VRAM${lab}</span><div class="track"><div class="fill" id="b-vram${i}" style="width:${Math.max(0, Math.min(100, used / tot * 100))}%"></div></div><span class="val" id="b-vram${i}-v">${f1(used)} / ${f1(tot)} GB</span></div>`;
+      }
+    });
+    hbBars.innerHTML = barsHtml;
     bar('b-ctx', ctxPct * 100, `${f0(sl.ctx_used)} / ${f0(sl.n_ctx)}`);
     const prePct = sl.prompt_tokens ? (sl.prompt_processed || 0) / sl.prompt_tokens * 100 : 0;
     bar('b-pre', pre ? prePct : (lr.prompt ? 100 : 0), pre ? `${f0(sl.prompt_processed)} / ${f0(sl.prompt_tokens)}` : lr.prompt ? `上一筆 ${f0(lr.prompt)} tok · ${f1(lr.ttft_s)} s` : '—', pre ? 'good' : 'good');
@@ -280,8 +354,8 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
     tile('q1', svcOk ? 'ok' : 'cr', svcOk ? '正常' : '異常', '', `${sw.uptime_s ? '開機 ' + dur(sw.uptime_s) + ' · ' : ''}hermes → ${route}`);
     tile('q2', 'ac', f1(tps), 'tok/s', gen ? `生成中 · MTP ${acc == null ? '—' : Math.round(acc * 100) + '%'}` : pre ? '讀 prompt 中' : `閒置 · 近 ${ro.n || 0} 筆中位 ${f1(ro.tps)}`);
     tile('q3', ctxPct > .9 ? 'wn' : 'ok', (sl.ctx_used / 1000).toFixed(1), `K / ${Math.round(sl.n_ctx / 1024)}K`, `${Math.round(ctxPct * 100)}% · 首字中位 ${f1(ro.ttft_s)} s`);
-    tile('q4', tcls, f0(g.temp), '°C', `${f0(g.watt)} W · VRAM ${f1(g.vram_used / 1024)} / ${f1(total)}`);
-    bar('q-pcie', pc / 45 * 100, `${f1(pc)} / 45 GB/s`, pc > 40 ? 'warn' : '');
+    tile('q4', tcls, f0(g.temp), '°C', `${f0(g.watt)} W · VRAM ${f1(g.vram_used / 1024)} / ${f1(total0)}`);
+    bar('q-pcie', pc0 / 45 * 100, `${f1(pc0)} / 45 GB/s`, pc0 > 40 ? 'warn' : '');
   }
 
   function draw(id, series, opts) {

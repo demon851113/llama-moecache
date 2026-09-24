@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""主機A 駕駛台收集器：只用標準庫。
+"""主機A／主機B 駕駛台收集器：只用標準庫（GPU 讀取依廠牌分派：nvidia-smi 或 amdgpu sysfs）。
 
 每 2 秒讀 nvidia-smi、/proc、llama-server 的 /slots 與 log；每 30 秒讀慢速項（df、hwmon、tailscale、systemd、dmesg）。
-提供 /api/now、/api/history、/api/events、/api/push（mini-1 回報 hermes 路徑）與首頁。
+提供 /api/now、/api/history、/api/events、/api/push（mini-2 回報 hermes 是否運行與主模型去處）、/api/comfyui（3060 生圖服務啟停）與首頁。
 只綁 Tailscale IP；沒有驗證，靠 tailnet 隔離。
 """
 from urllib.parse import parse_qs, urlparse
@@ -15,6 +15,10 @@ LLAMA = os.environ.get("COCKPIT_LLAMA", "http://100.85.251.56:8080")
 LOG = os.environ.get("COCKPIT_LOG", "/data/src/server-current.log")
 SERVICE = os.environ.get("COCKPIT_SERVICE", "flash-next.service")
 STATE_DIR = os.environ.get("COCKPIT_STATE", "/data/src/cockpit")
+LABEL = os.environ.get("COCKPIT_LABEL", "主機A")
+LLAMA_BIN = os.environ.get("COCKPIT_LLAMA_BIN", "/data/src/llama-moecache/build/bin/llama-server")
+LLAMA_LD = os.environ.get("COCKPIT_LD", "/data/src/llama-moecache/build/bin:/usr/local/cuda/lib64")
+GPU_VENDOR = os.environ.get("COCKPIT_GPU", "auto")
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXPERT_MB = 1.97
 N_LAYERS, N_ATTN_LAYERS, KV_BYTES_PER_TOKEN_LAYER = 48, 12, 1088
@@ -122,26 +126,115 @@ def load_state():
 
 
 # ---------- 快速項 ----------
-def read_gpu():
-    out = sh(["nvidia-smi", "--query-gpu=temperature.gpu,power.draw,power.limit,fan.speed,clocks.sm,utilization.gpu,memory.used,memory.total,pcie.link.gen.current,pcie.link.width.current",
+def read_gpu_nvidia():
+    """回傳每張 nvidia GPU 一筆 dict 的 list（依 nvidia-smi index 排序）。"""
+    out = sh(["nvidia-smi", "--query-gpu=index,name,temperature.gpu,power.draw,power.limit,fan.speed,clocks.sm,utilization.gpu,memory.used,memory.total,pcie.link.gen.current,pcie.link.width.current",
               "--format=csv,noheader,nounits"])
-    g = {}
-    try:
-        v = [x.strip() for x in out.strip().split(",")]
-        g = {"temp": float(v[0]), "watt": float(v[1]), "watt_limit": float(v[2]), "fan": float(v[3]), "clock": float(v[4]),
-             "util": float(v[5]), "vram_used": float(v[6]), "vram_total": float(v[7]), "pcie_gen": int(v[8]), "pcie_width": int(v[9])}
-    except Exception:
-        pass
+    gpus = []
+    for line in out.strip().splitlines():
+        if not line.strip():
+            continue
+        try:
+            v = [x.strip() for x in line.split(",")]
+            gpus.append({"index": int(v[0]), "name": v[1], "temp": float(v[2]), "watt": float(v[3]), "watt_limit": float(v[4]),
+                         "fan": float(v[5]), "clock": float(v[6]), "util": float(v[7]), "vram_used": float(v[8]),
+                         "vram_total": float(v[9]), "pcie_gen": int(v[10]), "pcie_width": int(v[11])})
+        except Exception:
+            continue
     dm = sh(["nvidia-smi", "dmon", "-s", "t", "-c", "1"], timeout=6)
+    by_idx = {gp["index"]: gp for gp in gpus}
     for line in dm.splitlines():
         if line.strip() and not line.startswith("#"):
             p = line.split()
             try:
-                g["pcie_rx_gbs"] = float(p[1]) / 1000.0
-                g["pcie_tx_gbs"] = float(p[2]) / 1000.0
+                idx = int(p[0])
+                if idx in by_idx:
+                    by_idx[idx]["pcie_rx_gbs"] = float(p[1]) / 1000.0
+                    by_idx[idx]["pcie_tx_gbs"] = float(p[2]) / 1000.0
             except Exception:
                 pass
+    return gpus
+
+
+_amd_dev = None
+
+
+def amd_device():
+    """找獨顯（vendor 0x1002、VRAM 最大者），回 (device 目錄, hwmon 目錄)。"""
+    global _amd_dev
+    if _amd_dev is not None:
+        return _amd_dev
+    best = None
+    for card in sorted(os.listdir("/sys/class/drm")):
+        d = f"/sys/class/drm/{card}/device"
+        try:
+            if not re.fullmatch(r"card\d+", card) or open(f"{d}/vendor").read().strip() != "0x1002":
+                continue
+            total = int(open(f"{d}/mem_info_vram_total").read())
+        except Exception:
+            continue
+        if best is None or total > best[1]:
+            best = (d, total)
+    hw = ""
+    if best:
+        try:
+            hw = os.path.join(best[0], "hwmon", sorted(os.listdir(os.path.join(best[0], "hwmon")))[0])
+        except Exception:
+            hw = ""
+    _amd_dev = (best[0] if best else "", hw)
+    return _amd_dev
+
+
+def _rd(path, default=None):
+    try:
+        return open(path).read().strip()
+    except Exception:
+        return default
+
+
+def read_gpu_amd():
+    d, hw = amd_device()
+    if not d:
+        return {}
+    g = {}
+    try:
+        g["temp"] = int(_rd(f"{hw}/temp1_input", "0")) / 1000            # edge
+        g["temp_hot"] = int(_rd(f"{hw}/temp2_input", "0")) / 1000        # junction
+        g["temp_mem"] = int(_rd(f"{hw}/temp3_input", "0")) / 1000
+        g["watt"] = int(_rd(f"{hw}/power1_average", "0")) / 1e6
+        g["watt_limit"] = int(_rd(f"{hw}/power1_cap", "0")) / 1e6
+        fan, fan_max = int(_rd(f"{hw}/fan1_input", "0")), int(_rd(f"{hw}/fan1_max", "0") or 0)
+        g["fan"] = round(fan / fan_max * 100) if fan_max else fan
+        g["clock"] = int(_rd(f"{hw}/freq1_input", "0")) / 1e6             # sclk MHz
+        g["util"] = float(_rd(f"{d}/gpu_busy_percent", "0"))
+        g["vram_used"] = int(_rd(f"{d}/mem_info_vram_used", "0")) / 2**20  # MiB，與 nvidia-smi 同單位
+        g["vram_total"] = int(_rd(f"{d}/mem_info_vram_total", "0")) / 2**20
+        speed = float((_rd(f"{d}/current_link_speed", "0") or "0").split()[0])
+        g["pcie_gen"] = {2.5: 1, 5.0: 2, 8.0: 3, 16.0: 4, 32.0: 5, 64.0: 6}.get(speed, 0)
+        g["pcie_width"] = int(_rd(f"{d}/current_link_width", "0") or 0)
+        g["pcie_rx_gbs"] = None   # amdgpu 沒有 PCIe 流量計數器
+        g["pcie_tx_gbs"] = None
+    except Exception:
+        pass
     return g
+
+
+def gpu_vendor():
+    global GPU_VENDOR
+    if GPU_VENDOR == "auto":
+        GPU_VENDOR = "amd" if (amd_device()[0] and not sh(["which", "nvidia-smi"]).strip()) else "nvidia"
+    return GPU_VENDOR
+
+
+def read_gpu():
+    """回傳 (gpus, g0)：gpus 是每張卡一筆 dict 的 list，g0 是第一張卡的 dict
+    （沿用舊的單卡結構，供 history/24h 圖與其他讀 state.json 的東西用）。"""
+    if gpu_vendor() == "amd":
+        g = read_gpu_amd()
+        gpus = [dict(g, index=0)] if g else []
+    else:
+        gpus = read_gpu_nvidia()
+    return gpus, (gpus[0] if gpus else {})
 
 
 def read_cpu():
@@ -170,7 +263,7 @@ def read_cpu():
 
 
 def llama_pid():
-    out = sh(["pgrep", "-f", "build/bin/llama-server"])
+    out = sh(["pgrep", "-x", "llama-server"])  # 以程式名比對，build/ 與 build-hip/ 都適用
     for tok in out.split():
         if tok.isdigit():
             return int(tok)
@@ -264,6 +357,14 @@ def tail_log():
             add_event("model", "crit", raw[-160:])
 
 
+COMFY_SERVICE = "comfyui.service"
+COMFY_URL = f"http://{HOST}:8188"
+
+
+def read_comfy():
+    return {"active": sh(["systemctl", "show", COMFY_SERVICE, "-p", "ActiveState", "--value"]).strip() or "unknown", "url": COMFY_URL}
+
+
 def read_service():
     out = sh(["systemctl", "show", SERVICE, "-p", "NRestarts,ActiveState,ActiveEnterTimestampMonotonic,ActiveEnterTimestamp"])
     d = {}
@@ -278,7 +379,7 @@ def fast_loop():
     prev_restarts = None
     while True:
         t0 = time.time()
-        g = read_gpu()
+        gpus, g = read_gpu()
         c = read_cpu()
         pid = llama_pid()
         p = read_proc(pid)
@@ -318,7 +419,7 @@ def fast_loop():
         with _lock:
             now.update({
                 "rolling": rolling, "last_request": (recent10[-1] if recent10 else None),
-                "ts": time.time(), "gpu": g, "cpu": c, "proc": p, "pid": pid,
+                "ts": time.time(), "gpu": g, "gpus": gpus, "cpu": c, "proc": p, "pid": pid,
                 "service": {"active": svc.get("ActiveState"), "restarts": svc.get("NRestarts"), "since": svc.get("ActiveEnterTimestamp")},
                 "health": bool(health and health.get("status") == "ok"),
                 "slot": {"state": state, "n_ctx": n_ctx, "ctx_used": ctx_used, "prompt_tokens": slot.get("n_prompt_tokens"),
@@ -338,7 +439,7 @@ def fast_loop():
                 threading.Thread(target=save_state, daemon=True).start()
             mb["m"] = m
             if "temp" in g:
-                mb["temp"].append(g["temp"]); mb["watt"].append(g.get("watt", 0)); mb["pcie"].append(g.get("pcie_rx_gbs", 0))
+                mb["temp"].append(g["temp"]); mb["watt"].append(g.get("watt") or 0); mb["pcie"].append(g.get("pcie_rx_gbs") or 0)  # AMD 無 PCIe 計數器時為 None，平均會炸
         time.sleep(max(0.5, 2.0 - (time.time() - t0)))
 
 
@@ -367,7 +468,8 @@ def read_hwmon():
 
 def read_dmesg():
     out = sh(["sudo", "-n", "dmesg", "--time-format", "iso"], timeout=10)
-    bad = [l for l in out.splitlines()[-400:] if re.search(r"NVRM: Xid|general protection|Oops|BUG:|segfault|fallen off the bus", l)
+    bad = [l for l in out.splitlines()[-400:] if re.search(r"NVRM: Xid|general protection|Oops|BUG:|segfault|fallen off the bus|amdgpu.*(GPU reset|timeout|hang|fault|error|IB test failed|ring .* timeout)|HSA_STATUS", l)
+           and not re.search(r"REG_WAIT timeout", l)
            and not re.search(r"traps: (ptxas|cicc|nvcc|cc1plus|python)", l)]
     last = ""
     if bad:
@@ -397,6 +499,11 @@ def slow_loop():
             d["tailscale"] = {"online": None, "ip": HOST}
         dm = read_dmesg()
         d["dmesg"] = dm
+        if not first and int(time.time() // 30) % 10 == 0:  # 每 5 分鐘重讀靜態資訊（服務重啟換參數後面板才會更新）
+            try:
+                static.update(read_static())
+            except Exception:
+                pass
         if dm["last"] and dm["last"] != _dmesg_seen and not first:
             add_event("host", "crit", "dmesg: " + dm["last"])
         _dmesg_seen = dm["last"]
@@ -413,7 +520,21 @@ def slow_loop():
 
 def read_static():
     s = {}
-    s["driver"] = sh(["nvidia-smi", "--query-gpu=driver_version,name", "--format=csv,noheader"]).strip()
+    s["label"] = LABEL
+    s["vendor"] = gpu_vendor()
+    if s["vendor"] == "amd":
+        d, _ = amd_device()
+        bdf = os.path.basename(os.path.realpath(d)) if d else ""
+        name = sh(["lspci", "-s", bdf]).strip().split(": ", 1)[-1] if bdf else "AMD GPU"
+        rocm = _rd("/opt/rocm/.info/version", "") or ""
+        s["driver"] = f"amdgpu(核心內建), {name}"
+        s["platform"] = f"ROCm {rocm}".strip()
+    else:
+        drv_out = sh(["nvidia-smi", "--query-gpu=driver_version,name", "--format=csv,noheader"]).strip()
+        drv_lines = [l for l in drv_out.splitlines() if l.strip()]
+        s["driver"] = drv_lines[0] if drv_lines else ""
+        s["gpu_names"] = [l.split(",", 1)[1].strip() for l in drv_lines if "," in l]
+        s["platform"] = "CUDA 13.2"
     s["kernel"] = sh(["uname", "-r"]).strip()
     s["os"] = sh(["lsb_release", "-ds"]).strip()
     cpu = sh(["lscpu"])
@@ -435,20 +556,27 @@ def read_static():
                 s["ub"] = cmd[i + 1]
             if a == "--spec-draft-n-max":
                 s["draft_n"] = cmd[i + 1]
+            if a in ("-ctk", "--cache-type-k"):
+                s["kv"] = cmd[i + 1]
         s["cwd"] = os.readlink(f"/proc/{pid}/cwd")
     except Exception:
         pass
-    try:
-        env = dict(os.environ, LD_LIBRARY_PATH="/data/src/llama-moecache/build/bin:/usr/local/cuda/lib64")
-        ver = subprocess.run(["/data/src/llama-moecache/build/bin/llama-server", "--version"], capture_output=True, text=True, timeout=10, env=env)
-        ver = ver.stdout + ver.stderr
-    except Exception:
-        ver = ""
-    m = re.search(r"commit ([0-9a-f]+)", ver)
-    s["commit"] = m.group(1) if m else ""
+    # 版本以「正在跑的伺服器」回報的 /props build_info 為準（例 b11330-f746e9945），切換 build 目錄也會自動對；
+    # 伺服器沒起來時才退回問 build/ 目錄那份程式。
+    s["commit"] = ""
     props = http_json(f"{LLAMA}/props")
     if props:
         s["alias"] = (props.get("model_alias") or "")
+        m = re.search(r"-([0-9a-f]{7,})$", props.get("build_info") or "")
+        s["commit"] = m.group(1) if m else ""
+    if not s["commit"]:
+        try:
+            env = dict(os.environ, LD_LIBRARY_PATH=LLAMA_LD)
+            ver = subprocess.run([LLAMA_BIN, "--version"], capture_output=True, text=True, timeout=10, env=env)
+            m = re.search(r"commit ([0-9a-f]+)", ver.stdout + ver.stderr)
+            s["commit"] = m.group(1) if m else ""
+        except Exception:
+            pass
     return s
 
 
@@ -522,9 +650,11 @@ class H(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers(); self.wfile.write(data); return
+        comfy = read_comfy() if path == "/api/now" else None
         with _lock:
             if path == "/api/now":
                 body = dict(now); body["slow"] = dict(slow); body["static"] = dict(static); body["peer"] = dict(peer)
+                body["comfy"] = comfy
                 body["recent"] = list(requests_ring)[-8:][::-1]
                 self._json(body); return
             if path == "/api/history":
@@ -543,12 +673,28 @@ class H(BaseHTTPRequestHandler):
             except Exception:
                 self._json({"error": "bad json"}, 400); return
             with _lock:
-                prev = peer.get("primary_up")
+                prev = peer.get("hermes_up")
                 peer.clear(); peer.update(d); peer["ts"] = time.time()
-            if prev is not None and prev != d.get("primary_up"):
-                add_event("model", "warn" if not d.get("primary_up") else "good",
-                          "hermes 切到備援 mini-1 27B" if not d.get("primary_up") else "hermes 切回主機A")
+            if prev is not None and prev != d.get("hermes_up"):
+                add_event("model", "good" if d.get("hermes_up") else "warn",
+                          f"hermes（{d.get('host', '?')}）{'恢復運行' if d.get('hermes_up') else '停止運行'}")
             self._json({"ok": True}); return
+        if self.path == "/api/comfyui":
+            # 自訂標頭讓跨站網頁無法直接觸發（瀏覽器會先發 preflight，本伺服器不回應）
+            if self.headers.get("X-Cockpit") != "1":
+                self._json({"error": "forbidden"}, 403); return
+            n = int(self.headers.get("Content-Length") or 0)
+            try:
+                action = json.loads(self.rfile.read(n).decode()).get("action")
+            except Exception:
+                self._json({"error": "bad json"}, 400); return
+            if action not in ("start", "stop"):
+                self._json({"error": "action 只接受 start / stop"}, 400); return
+            r = subprocess.run(["sudo", "-n", "systemctl", action, COMFY_SERVICE], capture_output=True, text=True, timeout=90)
+            state = read_comfy()["active"]
+            add_event("host", "info" if r.returncode == 0 else "warn",
+                      f"ComfyUI {'啟動' if action == 'start' else '停止'}（駕駛台）→ {state}" + ("" if r.returncode == 0 else f"：{r.stderr.strip()[:120]}"))
+            self._json({"ok": r.returncode == 0, "active": state, "error": r.stderr.strip()[:200] or None}); return
         self._json({"error": "not found"}, 404)
 
 
