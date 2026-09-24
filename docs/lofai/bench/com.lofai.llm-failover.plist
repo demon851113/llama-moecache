@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.lofai.llm-failover</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/bin/python3</string>
+    <string>/Users/lofai/llm-failover/llm_failover_proxy.py</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>LLM_PRIMARY</key><string>http://100.85.251.56:8080</string>
+    <key>LLM_BACKUP</key><string>http://100.99.178.74:8080</string>
+    <key>LLM_LISTEN_PORT</key><string>8090</string>
+    <key>LLM_LOG</key><string>/Users/lofai/llm-failover/proxy.log</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>/Users/lofai/llm-failover/launchd.out</string>
+  <key>StandardErrorPath</key><string>/Users/lofai/llm-failover/launchd.err</string>
+</dict>
+</plist>

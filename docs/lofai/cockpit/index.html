@@ -1,0 +1,368 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>主機A 駕駛台</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Fira+Sans:wght@400;500;600&family=Fira+Code:wght@400;500;600&family=Noto+Sans+TC:wght@400;500;700&display=swap">
+<style>
+:root{
+  --bg:#0B1017;--panel:#111923;--panel2:#0E151E;--line:#1E2A38;--line2:#2A3848;
+  --text:#E6EDF3;--muted:#8A9AAD;--dim:#5C6B7C;
+  --accent:#5AA9FF;--accent2:#2E5C99;--amber:#F2B640;
+  --good:#3DD68C;--warn:#F2B640;--crit:#FF5C5C;--info:#9B8CFF;
+  --mono:'Fira Code','JetBrains Mono',ui-monospace,Menlo,monospace;
+  --sans:'Fira Sans','Noto Sans TC','PingFang TC',system-ui,sans-serif;
+  --r:6px;
+}
+*{box-sizing:border-box}
+html{color-scheme:dark;background:var(--bg)}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.5 var(--sans);padding-block:16px 32px;padding-inline:20px}
+h1,h2,h3{margin:0;font-weight:600}
+.wrap{max-width:1400px;margin:0 auto;display:grid;gap:12px}
+.top{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.brand{display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}
+.brand h1{font-size:18px}
+.brand .sub{color:var(--muted);font-family:var(--mono);font-size:12px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--good);box-shadow:0 0 8px var(--good);margin-right:8px;vertical-align:middle}
+.dot.bad{background:var(--crit);box-shadow:0 0 8px var(--crit)}.dot.stale{background:var(--dim);box-shadow:none}
+.sig{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.pill{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:12px;font-weight:500;border:1px solid var(--line2);color:var(--muted);font-family:var(--mono)}
+.pill.g{color:var(--good);border-color:rgba(61,214,140,.4);background:rgba(61,214,140,.07)}
+.pill.b{color:var(--accent);border-color:var(--accent2);background:rgba(90,169,255,.08)}
+a.pill{text-decoration:none;cursor:pointer}a.pill:hover{border-color:var(--accent)}
+.pill.w{color:var(--warn);border-color:rgba(242,182,64,.5)}.pill.c{color:var(--crit);border-color:rgba(255,92,92,.5)}
+.blink{width:6px;height:6px;border-radius:50%;background:currentColor;animation:pulse 1.2s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.25}}
+@media (prefers-reduced-motion:reduce){.blink{animation:none}}
+.cols{display:grid;grid-template-columns:1fr 1fr;grid-auto-rows:auto;gap:12px;grid-template-areas:"hh mh" "ht mt" "hb mb" "hc mc" "hl ml" "he me"}
+.hh{grid-area:hh}.mh{grid-area:mh}.ht{grid-area:ht}.mt{grid-area:mt}.hb{grid-area:hb}.mb{grid-area:mb}.hc{grid-area:hc}.mc{grid-area:mc}.hl{grid-area:hl}.ml{grid-area:ml}.he{grid-area:he}.me{grid-area:me}
+.colhead{display:flex;align-items:baseline;justify-content:space-between;padding:4px 2px 0;gap:12px}
+.colhead h2{font-size:15px;letter-spacing:.3px;white-space:nowrap}
+.colhead h2 i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:8px;vertical-align:-1px}
+.colhead span{font-family:var(--mono);font-size:11px;color:var(--dim);text-align:right}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px;display:flex;flex-direction:column;gap:12px;min-width:0}
+.panel h3{font-size:11px;color:var(--muted);letter-spacing:.8px;text-transform:uppercase;display:flex;justify-content:space-between}
+.panel h3 span{font-family:var(--mono);font-weight:400;color:var(--dim);letter-spacing:0;text-transform:none}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.tile{background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:10px 12px;position:relative;overflow:hidden;min-height:78px}
+.tile::before{content:"";position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--stripe,var(--line2))}
+.tile .k{font-size:11px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase}
+.tile .v{font-family:var(--mono);font-size:24px;font-weight:600;line-height:1.1;margin-top:4px;font-variant-numeric:tabular-nums}
+.tile .v small{font-size:12px;color:var(--muted);font-weight:400;margin-left:3px}
+.tile .s{font-size:11.5px;color:var(--muted);margin-top:4px}
+.ok{--stripe:var(--good)}.wn{--stripe:var(--warn)}.cr{--stripe:var(--crit)}.ac{--stripe:var(--accent)}.na{--stripe:var(--line2)}
+.bars{display:grid;gap:10px}
+.bar{display:grid;grid-template-columns:104px 1fr 120px;align-items:center;gap:12px;font-size:13px}
+.bar .lab{color:var(--muted)}
+.bar .val{font-family:var(--mono);text-align:right;font-size:12.5px;font-variant-numeric:tabular-nums}
+.track{height:10px;background:var(--panel2);border:1px solid var(--line);border-radius:3px;overflow:hidden;position:relative}
+.fill{height:100%;background:var(--accent);border-radius:2px;transition:width .4s}
+.fill.warn{background:var(--warn)}.fill.good{background:var(--good)}.fill.crit{background:var(--crit)}
+.ceil{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--amber)}
+.stack{display:flex;height:10px;border-radius:3px;overflow:hidden;border:1px solid var(--line);background:var(--panel2)}
+.stack i{display:block;height:100%;transition:width .4s}
+.legend{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11.5px;color:var(--muted);grid-column:2/4}
+.legend b{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.chart{width:100%;height:140px;display:block}
+.chart text{font-family:var(--mono);font-size:10px;fill:var(--dim)}
+.chart .grid{stroke:var(--line);stroke-width:1}
+.chart .l{fill:none;stroke:var(--accent);stroke-width:1.6}
+.chart .a{fill:url(#ga)}
+.chart .l2{fill:none;stroke:var(--amber);stroke-width:1.4}
+.chart .a2{fill:url(#gb)}
+.chart .end{fill:var(--accent);stroke:var(--bg);stroke-width:2}
+.chart .end2{fill:var(--amber);stroke:var(--bg);stroke-width:2}
+.stat{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted)}
+.stat b{font-family:var(--mono);color:var(--text);font-weight:500}
+.spec{margin:0;display:grid;grid-template-columns:auto 1fr;gap:7px 16px;font-size:12.5px}
+.spec dt{color:var(--muted)}.spec dd{margin:0;font-family:var(--mono);text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.spec dd.g{color:var(--good)}.spec dd.w{color:var(--warn)}.spec dd.c{color:var(--crit)}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{color:var(--muted);font-weight:500;text-align:left;font-size:11px;letter-spacing:.6px;text-transform:uppercase;padding:0 8px 7px 0;border-bottom:1px solid var(--line)}
+td{padding:7px 8px 7px 0;border-bottom:1px solid var(--line)}
+tr:last-child td{border-bottom:0}
+td.num,th.num{text-align:right;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.tw{overflow-x:auto}
+.ev-row{display:grid;grid-template-columns:52px 60px 1fr;gap:10px;padding:6px 0;border-bottom:1px solid var(--line);font-size:12.5px;align-items:baseline}
+.ev-row:last-child{border-bottom:0}
+.ev-row .t{font-family:var(--mono);color:var(--muted)}
+.tag{font-size:11px;padding:1px 6px;border-radius:3px;border:1px solid;font-family:var(--mono);text-align:center}
+.tag.info{color:var(--info);border-color:rgba(155,140,255,.4)}.tag.warn{color:var(--warn);border-color:rgba(242,182,64,.5)}.tag.crit{color:var(--crit);border-color:rgba(255,92,92,.5)}.tag.good{color:var(--good);border-color:rgba(61,214,140,.4)}
+.empty{color:var(--dim);font-size:12.5px;padding:6px 0}
+summary{list-style:none;cursor:default;display:block}
+summary::-webkit-details-marker{display:none}
+summary h3{position:relative;padding-right:18px}
+summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;height:7px;border-right:1.5px solid var(--dim);border-bottom:1.5px solid var(--dim);transform:rotate(45deg);opacity:0;transition:transform .2s}
+.quick{display:none}
+@media (max-width:820px){
+  body{padding-inline:16px}
+  .cols{grid-template-columns:1fr;grid-template-areas:"hh" "ht" "hb" "hc" "hl" "he" "mh" "mt" "mb" "mc" "ml" "me"}
+  .bar{grid-template-columns:88px 1fr 100px}
+  .legend{grid-column:1/4}
+  summary{cursor:pointer;-webkit-tap-highlight-color:transparent;margin:-14px -16px;padding:14px 16px;min-height:44px}
+  details[open] summary{margin-bottom:-2px}
+  summary h3::after{opacity:1;transform:rotate(-45deg)}
+  details[open] summary h3::after{transform:rotate(45deg)}
+  summary:focus-visible{outline:2px solid var(--accent);outline-offset:-4px;border-radius:var(--r)}
+  .quick{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .quick .tile{min-height:72px}
+  .quick .bar{grid-column:1/3;grid-template-columns:88px 1fr 100px}
+  .quick .qreq{grid-column:1/3;background:var(--panel2);border:1px solid var(--line);border-radius:4px;padding:8px 12px}
+  .quick .qreq .k{font-size:11px;color:var(--muted);letter-spacing:.6px;text-transform:uppercase;margin-bottom:4px}
+  .quick .qrow{display:grid;grid-template-columns:62px 1fr auto auto;gap:8px;font-size:12px;padding:4px 0;border-top:1px solid var(--line)}
+  .quick .qrow .t{font-family:var(--mono);color:var(--muted)}
+  .quick .qrow .n{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right}
+  .colhead{padding-top:8px}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <h1><span class="dot" id="dot"></span>主機A 駕駛台</h1>
+      <span class="sub" id="sub">連線中…</span>
+    </div>
+    <div class="sig"><span id="sig" style="display:contents"></span><a class="pill b" href="/logs">日誌查詢 ›</a></div>
+  </header>
+
+  <section class="quick" aria-label="快顯">
+    <div class="tile" id="q1"><div class="k">服務 · hermes</div><div class="v" style="font-size:18px">—</div><div class="s"></div></div>
+    <div class="tile ac" id="q2"><div class="k">即時速度</div><div class="v">—</div><div class="s"></div></div>
+    <div class="tile" id="q3"><div class="k">上下文</div><div class="v">—</div><div class="s"></div></div>
+    <div class="tile" id="q4"><div class="k">GPU</div><div class="v">—</div><div class="s"></div></div>
+    <div class="bar"><span class="lab">PCIe 搬運</span><div class="track"><div class="fill warn" id="q-pcie" style="width:0"></div><i class="ceil" style="left:100%"></i></div><span class="val" id="q-pcie-v">—</span></div>
+    <div class="qreq"><div class="k">最近請求</div><div id="qreq"></div></div>
+  </section>
+
+  <main class="cols">
+    <div class="colhead hh"><h2><i style="background:var(--amber)"></i>主機</h2><span id="h-sub">—</span></div>
+    <div class="colhead mh"><h2><i style="background:var(--accent)"></i>模型</h2><span id="m-sub">—</span></div>
+
+    <details class="panel ht"><summary><h3>現況 <span>每 2 秒</span></h3></summary>
+      <div class="tiles">
+        <div class="tile" id="t-gpu"><div class="k">GPU 溫度</div><div class="v">—</div><div class="s"></div></div>
+        <div class="tile" id="t-ram"><div class="k">主記憶體</div><div class="v">—</div><div class="s"></div></div>
+        <div class="tile" id="t-cpu"><div class="k">CPU 負載</div><div class="v">—</div><div class="s"></div></div>
+      </div>
+    </details>
+    <details class="panel mt"><summary><h3>現況 <span id="slot-sub">slot 0 / 1 · 每 2 秒</span></h3></summary>
+      <div class="tiles">
+        <div class="tile ac" id="t-tps"><div class="k">即時速度</div><div class="v">—</div><div class="s"></div></div>
+        <div class="tile" id="t-ctx"><div class="k">上下文</div><div class="v">—</div><div class="s"></div></div>
+        <div class="tile" id="t-mtp"><div class="k">MTP 接受率</div><div class="v">—</div><div class="s"></div></div>
+      </div>
+    </details>
+
+    <details class="panel hb"><summary><h3>資源 <span>PCIe 是天花板</span></h3></summary>
+      <div class="bars">
+        <div class="bar"><span class="lab">PCIe 搬運</span><div class="track"><div class="fill warn" id="b-pcie" style="width:0"></div><i class="ceil" style="left:100%"></i></div><span class="val" id="b-pcie-v">—</span></div>
+        <div class="bar"><span class="lab">GPU 忙碌</span><div class="track"><div class="fill" id="b-util" style="width:0"></div></div><span class="val" id="b-util-v">—</span></div>
+        <div class="bar"><span class="lab">VRAM</span><div class="stack" id="b-vram"></div><span class="val" id="b-vram-v">—</span></div>
+        <div class="bar" style="align-items:start"><span></span><div class="legend" id="b-vram-l"></div></div>
+      </div>
+    </details>
+    <details class="panel mb"><summary><h3>運作 <span>目前這一筆</span></h3></summary>
+      <div class="bars">
+        <div class="bar"><span class="lab">上下文</span><div class="track"><div class="fill" id="b-ctx" style="width:0"></div></div><span class="val" id="b-ctx-v">—</span></div>
+        <div class="bar"><span class="lab">讀 prompt</span><div class="track"><div class="fill good" id="b-pre" style="width:0"></div></div><span class="val" id="b-pre-v">—</span></div>
+        <div class="bar"><span class="lab">讀取速度</span><div class="track"><div class="fill good" id="b-pfs" style="width:0"></div></div><span class="val" id="b-pfs-v">—</span></div>
+        <div class="bar" style="align-items:start"><span></span><div class="legend" id="m-legend"></div></div>
+      </div>
+    </details>
+
+    <details class="panel hc"><summary><h3>GPU 溫度與功耗 · 24 小時 <span>°C · W</span></h3></summary>
+      <svg class="chart" id="c2" role="img" aria-label="近 24 小時 GPU 溫度與功耗"></svg>
+      <div class="stat" id="s2"></div>
+    </details>
+    <details class="panel mc"><summary><h3>生成速度 · 24 小時 <span>tok/s，每分鐘中位</span></h3></summary>
+      <svg class="chart" id="c1" role="img" aria-label="近 24 小時 tok/s"></svg>
+      <div class="stat" id="s1"></div>
+    </details>
+
+    <details class="panel hl"><summary><h3>規格與連結 <span>每 30 秒</span></h3></summary>
+      <dl class="spec" id="spec"></dl>
+    </details>
+    <details class="panel ml"><summary><h3>最近請求 <span>最後 8 筆</span></h3></summary>
+      <div class="tw"><table>
+        <thead><tr><th>時間</th><th class="num">prompt</th><th class="num">生成</th><th class="num">tok/s</th><th class="num">首字</th><th class="num">接受</th></tr></thead>
+        <tbody id="reqs"></tbody>
+      </table></div>
+    </details>
+
+    <details class="panel he"><summary><h3>主機事件 <span>24 小時內</span></h3></summary><div id="hev"></div></details>
+    <details class="panel me"><summary><h3>模型事件 <span>24 小時內</span></h3></summary><div id="mev"></div></details>
+  </main>
+</div>
+
+<script>
+(function(){
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const f1 = v => v == null ? '—' : Number(v).toFixed(1);
+  const f0 = v => v == null ? '—' : Math.round(Number(v)).toLocaleString();
+  const hms = ts => new Date(ts * 1000).toTimeString().slice(0, 8);
+  const hm = ts => new Date(ts * 1000).toTimeString().slice(0, 5);
+  const dur = s => { s = Math.max(0, Math.floor(s)); const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return d ? `${d}d ${h}h` : h ? `${h}h ${m}m` : `${m}m`; };
+  const tile = (id, cls, v, unit, s) => { const el = $(id); el.className = 'tile ' + cls; el.querySelector('.v').innerHTML = esc(v) + (unit ? `<small>${esc(unit)}</small>` : ''); el.querySelector('.s').textContent = s; };
+  const bar = (id, pct, v, cls) => { const f = $(id); f.style.width = Math.max(0, Math.min(100, pct || 0)) + '%'; if (cls) f.className = 'fill ' + cls; $(id + '-v').textContent = v; };
+  let lastOk = 0, history = null;
+
+  function renderNow(d) {
+    const g = d.gpu || {}, c = d.cpu || {}, sl = d.slot || {}, lv = d.live || {}, st = d.static || {}, sw = d.slow || {}, pe = d.peer || {}, vr = d.vram || {};
+    const svcOk = d.service && d.service.active === 'active' && d.health;
+    const peerFresh = pe.ts && (Date.now() / 1000 - pe.ts) < 40;
+    const route = !peerFresh ? '未回報' : (pe.primary_up ? '主機A' : 'mini-1 27B');
+    $('dot').className = 'dot ' + (svcOk ? '' : 'bad');
+    $('sub').textContent = `lofai-worker01 · ${new Date(d.ts * 1000).toLocaleString('zh-TW', {hour12: false})}`;
+    const gen = sl.state === 'generating', pre = sl.state === 'prefill';
+    $('sig').innerHTML =
+      `<span class="pill ${svcOk ? 'g' : 'c'}">服務 ${svcOk ? '正常' : (d.service && d.service.active) || '未知'}${sw.uptime_s ? ' · 開機 ' + dur(sw.uptime_s) : ''}</span>` +
+      `<span class="pill ${!peerFresh ? '' : pe.primary_up ? 'g' : 'w'}">hermes → ${route}</span>` +
+      (gen ? `<span class="pill b"><i class="blink"></i>生成中 ${f1(lv.tps)} tok/s</span>` : pre ? `<span class="pill b"><i class="blink"></i>讀 prompt ${f0(sl.prompt_processed)} / ${f0(sl.prompt_tokens)}</span>` : `<span class="pill">閒置</span>`);
+    $('h-sub').textContent = `${(st.cpu_model || '').replace('AMD ', '').replace(' 16-Core Processor', '')} · ${(st.driver || '').split(',').slice(1).join('').trim()} · ${f0(c.mem_total_gb)}G DDR5`;
+    $('m-sub').textContent = `${st.alias || st.model || ''} · moe-cache ${st.commit || ''}`;
+    $('slot-sub').textContent = `slot 0 / 1 · task ${sl.task ?? '—'}`;
+
+    // 主機三格
+    const tcls = g.temp >= 80 ? 'cr' : g.temp >= 72 ? 'wn' : 'ok';
+    tile('t-gpu', tcls, f0(g.temp), '°C', `${f0(g.watt)} / ${f0(g.watt_limit)} W · 風扇 ${f0(g.fan)}% · ${f0(g.clock)} MHz`);
+    const ramPct = c.mem_total_gb ? c.mem_used_gb / c.mem_total_gb : 0;
+    tile('t-ram', ramPct > .93 ? 'wn' : 'ok', f1(c.mem_used_gb), `/ ${f0(c.mem_total_gb)} G`, `llama-server RSS ${f1(d.proc && d.proc.rss_gb)} G · DIMM ${sw.hwmon && sw.hwmon.dimm && sw.hwmon.dimm.length ? Math.max(...sw.hwmon.dimm).toFixed(0) + ' °C' : '—'}`);
+    tile('t-cpu', (c.load1 || 0) > 8 ? 'wn' : 'ok', f1(c.load1), `/ ${c.ncpu || '—'} 核`, `${f0(sw.hwmon && sw.hwmon.cpu_temp)} °C · 使用率 ${f1(c.util)}%`);
+    // 模型三格
+    const ro = d.rolling || {}, lr = d.last_request || {};
+    const tps = gen ? lv.tps : lr.tps;
+    tile('t-tps', 'ac', f1(tps), 'tok/s', gen ? `生成中 · 已生成 ${f0(sl.n_gen)}` : pre ? `讀 prompt 中 ${f0(sl.prompt_processed)} / ${f0(sl.prompt_tokens)}` : `上一筆 ${lr.ts ? hms(lr.ts) : '—'} · 近 ${ro.n || 0} 筆中位 ${f1(ro.tps)}`);
+    const ctxPct = sl.n_ctx ? sl.ctx_used / sl.n_ctx : 0;
+    const cachePct = (sl.state !== 'idle' && sl.prompt_tokens) ? 100 * (sl.prompt_cached || 0) / sl.prompt_tokens : (lr.prompt_total ? 100 * (lr.cached || 0) / lr.prompt_total : null);
+    tile('t-ctx', ctxPct > .9 ? 'wn' : 'ok', (sl.ctx_used / 1000).toFixed(1), `K / ${Math.round(sl.n_ctx / 1024)}K`, `${Math.round(ctxPct * 100)}% · 前綴快取 ${cachePct == null ? '—' : Math.round(cachePct) + '%'}`);
+    const acc = ro.accept ?? lv.accept;
+    tile('t-mtp', acc == null ? 'na' : acc < .5 ? 'wn' : 'ok', acc == null ? '—' : Math.round(acc * 100), '%', `近 ${ro.n || 0} 筆中位 · 本筆 ${lv.accept == null ? '—' : Math.round(lv.accept * 100) + '%'} · 草稿長 ${f1(ro.mean_len ?? lv.mean_len)}`);
+
+    // 條
+    const pc = g.pcie_rx_gbs || 0;
+    bar('b-pcie', pc / 45 * 100, `${f1(pc)} / 45 GB/s`, pc > 40 ? 'warn' : '');
+    bar('b-util', g.util, `${f0(g.util)}%`);
+    const total = (g.vram_total || 16303) / 1024, segs = [['cache', 'var(--accent)', '快取'], ['dense', 'var(--accent2)', 'dense'], ['mtp', 'var(--info)', 'MTP'], ['kv', 'var(--amber)', 'KV'], ['other', 'var(--dim)', '其他']];
+    $('b-vram').innerHTML = segs.map(s => `<i style="width:${(vr[s[0]] || 0) / total * 100}%;background:${s[1]}"></i>`).join('');
+    $('b-vram-v').textContent = `${f1(g.vram_used / 1024)} / ${f1(total)} GB`;
+    $('b-vram-l').innerHTML = segs.map(s => `<span><b style="background:${s[1]}"></b>${s[2]} ${f1(vr[s[0]])}</span>`).join('') + `<span><b style="border:1px solid var(--line2)"></b>留白 ${f1(vr.free)}</span>`;
+    bar('b-ctx', ctxPct * 100, `${f0(sl.ctx_used)} / ${f0(sl.n_ctx)}`);
+    const prePct = sl.prompt_tokens ? (sl.prompt_processed || 0) / sl.prompt_tokens * 100 : 0;
+    bar('b-pre', pre ? prePct : (lr.prompt ? 100 : 0), pre ? `${f0(sl.prompt_processed)} / ${f0(sl.prompt_tokens)}` : lr.prompt ? `上一筆 ${f0(lr.prompt)} tok · ${f1(lr.ttft_s)} s` : '—', pre ? 'good' : 'good');
+    bar('b-pfs', (ro.prefill_tps || 0) / 850 * 100, `${f0(ro.prefill_tps)} tok/s（中位）`);
+    $('m-legend').innerHTML = [`快取 ${d.cache_slots} 槽/層`, `草稿 n=${st.draft_n || '—'}`, `ub ${st.ub || '—'}`, `KV q8_0`].map(esc).map(x => `<span>${x}</span>`).join('');
+
+    // 規格
+    const ts = sw.tailscale || {}, dm = sw.dmesg || {}, dk = sw.disks || [], nv = (sw.hwmon && sw.hwmon.nvme) || [];
+    const busy = (g.util || 0) > 20 || gen || pre;
+    const pcieOk = (g.pcie_gen === 5 && g.pcie_width === 16) || !busy;
+    $('spec').innerHTML = [
+      ['PCIe 連結', `Gen${g.pcie_gen ?? '?'} x${g.pcie_width ?? '?'}${!busy && g.pcie_gen < 5 ? ' · 閒置省電' : pcieOk ? ' · 無降速' : ' · 負載中降速！'}`, pcieOk ? 'g' : 'c'],
+      ['DDR5', st.ddr || '—', (st.ddr || '').startsWith('2 ') ? 'g' : 'w'],
+      ...dk.map((x, i) => [`NVMe ${x.mount}`, `${x.used_gb} G / ${x.size_gb} G${nv[i] != null ? ' · ' + nv[i].toFixed(0) + ' °C' : ''}`, '']),
+      ['PLE 讀取', `${f0(d.proc && d.proc.read_mbs)} MB/s（SSD mmap）`, ''],
+      ['Tailscale', `${ts.ip || '—'} · ${ts.online ? '直連' : '離線？'}`, ts.online ? 'g' : 'w'],
+      ['驅動 / CUDA', `${(st.driver || '').split(',')[0]} / 13.2`, ''],
+      ['核心', `${st.kernel || ''} · ${(st.os || '').replace(' LTS', '')}`, ''],
+      ['systemd', `${d.service ? d.service.active : '—'} · 重啟 ${d.service ? d.service.restarts : '—'}`, svcOk ? 'g' : 'c'],
+      ['dmesg 警示', dm.count ? `${dm.count} 筆 · ${dm.last.slice(0, 40)}` : '無', dm.count ? 'c' : 'g'],
+    ].map(r => `<dt>${esc(r[0])}</dt><dd class="${r[2]}">${esc(r[1])}</dd>`).join('');
+
+    // 最近請求
+    const rows = d.recent || [];
+    $('reqs').innerHTML = rows.length ? rows.map(r => `<tr><td class="num">${hms(r.ts)}</td><td class="num">${f0(r.prompt)}</td><td class="num">${f0(r.gen)}</td><td class="num">${f1(r.tps)}</td><td class="num">${f1(r.ttft_s)}s</td><td class="num">${r.accept == null ? '—' : Math.round(r.accept * 100) + '%'}</td></tr>`).join('') : '<tr><td colspan="6" class="empty">還沒有請求</td></tr>';
+    $('qreq').innerHTML = rows.slice(0, 3).map(r => `<div class="qrow"><span class="t">${hms(r.ts)}</span><span class="n" style="text-align:left">${f0(r.prompt)} → ${f0(r.gen)}</span><span class="n">${f1(r.tps)} tok/s</span><span class="n">首字 ${f1(r.ttft_s)}s</span></div>`).join('') || '<div class="empty">還沒有請求</div>';
+
+    // 快顯
+    tile('q1', svcOk ? 'ok' : 'cr', svcOk ? '正常' : '異常', '', `${sw.uptime_s ? '開機 ' + dur(sw.uptime_s) + ' · ' : ''}hermes → ${route}`);
+    tile('q2', 'ac', f1(tps), 'tok/s', gen ? `生成中 · MTP ${acc == null ? '—' : Math.round(acc * 100) + '%'}` : pre ? '讀 prompt 中' : `閒置 · 近 ${ro.n || 0} 筆中位 ${f1(ro.tps)}`);
+    tile('q3', ctxPct > .9 ? 'wn' : 'ok', (sl.ctx_used / 1000).toFixed(1), `K / ${Math.round(sl.n_ctx / 1024)}K`, `${Math.round(ctxPct * 100)}% · 首字中位 ${f1(ro.ttft_s)} s`);
+    tile('q4', tcls, f0(g.temp), '°C', `${f0(g.watt)} W · VRAM ${f1(g.vram_used / 1024)} / ${f1(total)}`);
+    bar('q-pcie', pc / 45 * 100, `${f1(pc)} / 45 GB/s`, pc > 40 ? 'warn' : '');
+  }
+
+  function draw(id, series, opts) {
+    const svg = $(id); const W = Math.max(320, Math.round(svg.clientWidth || 640)), H = 140, P = {l: 32, r: 12, t: 10, b: 18};
+    svg.innerHTML = ''; svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    const N = opts.n; const x = i => P.l + (i / Math.max(1, N - 1)) * (W - P.l - P.r);
+    const ns = 'http://www.w3.org/2000/svg';
+    const el = (t, a) => { const e = document.createElementNS(ns, t); for (const k in a) e.setAttribute(k, a[k]); svg.appendChild(e); return e; };
+    el('defs', {}).innerHTML = '<linearGradient id="ga" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#5AA9FF" stop-opacity=".35"/><stop offset="1" stop-color="#5AA9FF" stop-opacity="0"/></linearGradient><linearGradient id="gb" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#F2B640" stop-opacity=".25"/><stop offset="1" stop-color="#F2B640" stop-opacity="0"/></linearGradient>';
+    const [lo, hi] = opts.range; const y = v => P.t + (1 - (v - lo) / (hi - lo)) * (H - P.t - P.b);
+    opts.ticks.forEach(t => { el('line', {x1: P.l, x2: W - P.r, y1: y(t), y2: y(t), class: 'grid'}); el('text', {x: P.l - 6, y: y(t) + 3, 'text-anchor': 'end'}).textContent = t; });
+    ['-24h', '-18h', '-12h', '-6h', '現在'].forEach((lab, k) => { el('text', {x: x(Math.round(k * (N - 1) / 4)), y: H - 5, 'text-anchor': k === 4 ? 'end' : k === 0 ? 'start' : 'middle'}).textContent = lab; });
+    series.forEach((s, si) => {
+      const segs = []; let cur = [];
+      s.forEach((v, i) => { if (v == null) { if (cur.length) segs.push(cur); cur = []; } else cur.push([i, v]); });
+      if (cur.length) segs.push(cur);
+      segs.forEach(seg => {
+        const pts = seg.map(([i, v]) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`);
+        if (seg.length > 1) el('path', {d: `M${pts[0]} L${pts.slice(1).join(' L')} L${x(seg[seg.length - 1][0]).toFixed(1)},${y(lo)} L${x(seg[0][0]).toFixed(1)},${y(lo)} Z`, class: si ? 'a2' : 'a'});
+        el('path', {d: seg.length > 1 ? `M${pts.join(' L')}` : `M${pts[0]} l0.1,0`, class: si ? 'l2' : 'l'});
+      });
+      const last = segs.length ? segs[segs.length - 1].slice(-1)[0] : null;
+      if (last) el('circle', {cx: x(last[0]), cy: y(last[1]), r: 3.5, class: si ? 'end2' : 'end'});
+    });
+  }
+
+  function renderHistory(h) {
+    history = h;
+    const now = Math.floor(Date.now() / 60000) * 60, N = 1440;
+    const byMin = new Map((h.minute || []).map(m => [Math.floor(m.ts / 60) * 60, m]));
+    const tps = [], temp = [], watt = []; let req = 0;
+    for (let i = 0; i < N; i++) { const m = byMin.get(now - (N - 1 - i) * 60); tps.push(m ? m.tps : null); temp.push(m ? m.temp : null); watt.push(m && m.watt != null ? m.watt / 300 * 90 : null); if (m) req += m.req || 0; }
+    draw('c1', [tps], {range: [0, 90], ticks: [0, 30, 60, 90], n: N});
+    draw('c2', [temp, watt], {range: [0, 90], ticks: [30, 60, 90], n: N});
+    const tv = tps.filter(v => v != null).sort((a, b) => a - b), te = temp.filter(v => v != null), wv = (h.minute || []).map(m => m.watt).filter(v => v != null);
+    $('s1').innerHTML = `<span>中位 <b>${tv.length ? f1(tv[Math.floor(tv.length / 2)]) : '—'}</b></span><span>最低 <b>${tv.length ? f1(tv[0]) : '—'}</b></span><span>請求 <b>${req}</b></span>`;
+    $('s2').innerHTML = `<span>溫度峰值 <b>${te.length ? f0(Math.max(...te)) : '—'}°C</b></span><span>功耗均值 <b>${wv.length ? f0(wv.reduce((a, b) => a + b, 0) / wv.length) : '—'} W</b></span><span>功耗換算 <b>300 W = 90</b></span>`;
+  }
+
+  function renderEvents(e) {
+    const row = x => `<div class="ev-row"><span class="t">${hm(x.ts)}</span><span class="tag ${x.level}">${{info: '資訊', warn: '警告', crit: '錯誤', good: '恢復'}[x.level] || x.level}</span><span>${esc(x.text)}</span></div>`;
+    const cut = Date.now() / 1000 - 86400;
+    const ev = (e.events || []).filter(x => x.ts > cut);
+    const h = ev.filter(x => x.kind === 'host'), m = ev.filter(x => x.kind !== 'host');
+    $('hev').innerHTML = h.length ? h.slice(0, 6).map(row).join('') : '<div class="empty">24 小時內沒有主機事件</div>';
+    $('mev').innerHTML = m.length ? m.slice(0, 6).map(row).join('') : '<div class="empty">24 小時內沒有模型事件</div>';
+  }
+
+  async function poll(path, fn) {
+    try { const r = await fetch(path, {cache: 'no-store'}); if (!r.ok) throw 0; fn(await r.json()); lastOk = Date.now(); }
+    catch (e) { if (Date.now() - lastOk > 10000) { $('dot').className = 'dot stale'; $('sub').textContent = '收集器沒有回應'; } }
+  }
+  const tickNow = () => poll('/api/now', renderNow);
+  const tickHist = () => poll('/api/history', renderHistory);
+  const tickEv = () => poll('/api/events', renderEvents);
+  tickNow(); tickHist(); tickEv();
+  setInterval(tickNow, 2000); setInterval(tickHist, 60000); setInterval(tickEv, 10000);
+
+  // 收合：桌機全開不可收；手機預設全收，記住打開過的
+  const mq = window.matchMedia('(max-width: 820px)');
+  const panels = [...document.querySelectorAll('details.panel')];
+  const KEY = 'hostA-cockpit-open';
+  let remembered = []; try { remembered = JSON.parse(localStorage.getItem(KEY) || '[]'); } catch (e) {}
+  const pid = d => [...d.classList].find(c => c.length === 2);
+  function applyMode() {
+    panels.forEach(d => { d.open = mq.matches ? remembered.includes(pid(d)) : true; d.querySelector('summary').tabIndex = mq.matches ? 0 : -1; });
+    if (history) renderHistory(history);
+  }
+  panels.forEach(d => {
+    d.querySelector('summary').addEventListener('click', e => { if (!mq.matches) e.preventDefault(); });
+    d.addEventListener('toggle', () => {
+      if (!mq.matches) return;
+      remembered = d.open ? [...new Set([...remembered, pid(d)])] : remembered.filter(x => x !== pid(d));
+      try { localStorage.setItem(KEY, JSON.stringify(remembered)); } catch (e) {}
+      if (d.open && history) renderHistory(history);
+    });
+  });
+  mq.addEventListener('change', applyMode);
+  let rt; window.addEventListener('resize', () => { clearTimeout(rt); rt = setTimeout(() => history && renderHistory(history), 150); });
+  applyMode();
+})();
+</script>
+</body>
+</html>
