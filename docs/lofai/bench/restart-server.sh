@@ -4,7 +4,7 @@
 START=${1:?啟動腳本}; shift
 P=$(pgrep -f "build/bin/llama-server" | head -1)
 if [ -n "$P" ]; then
-  kill -INT "$P"; echo "已送 SIGINT 給 $P，等待退出..."
+  kill -INT "$P"; echo "已送 SIGINT 給 ${P}，等待退出..."
   for i in $(seq 1 120); do pgrep -f "build/bin/llama-server" >/dev/null || break; sleep 1; done
   if pgrep -f "build/bin/llama-server" >/dev/null; then echo "!! 120 秒仍未退出，停止，不硬殺（見踩雷）"; exit 2; fi
   echo "舊行程已退出（$i 秒）"; sleep 5
