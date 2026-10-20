@@ -211,7 +211,7 @@ summary h3::after{content:"";position:absolute;right:2px;top:2px;width:7px;heigh
     const gpus = (d.gpus && d.gpus.length) ? d.gpus : (g.temp != null ? [g] : []);
     const svcOk = d.service && d.service.active === 'active' && d.health;
     const peerFresh = pe.ts && (Date.now() / 1000 - pe.ts) < 40;
-    const route = !peerFresh ? '未回報' : (pe.primary_up ? '主機A' : 'mini-1 27B');
+    const route = !peerFresh ? '未回報' : (pe.primary_up ? '主機A' : 'home-mm-m4pro 27B');
     $('dot').className = 'dot ' + (svcOk ? '' : 'bad');
     $('sub').textContent = `lofai-worker01 · ${new Date(d.ts * 1000).toLocaleString('zh-TW', {hour12: false})}`;
     const gen = sl.state === 'generating', pre = sl.state === 'prefill';

@@ -2,7 +2,7 @@
 """主機A／主機B 駕駛台收集器：只用標準庫（GPU 讀取依廠牌分派：nvidia-smi 或 amdgpu sysfs）。
 
 每 2 秒讀 nvidia-smi、/proc、llama-server 的 /slots 與 log；每 30 秒讀慢速項（df、hwmon、tailscale、systemd、dmesg）。
-提供 /api/now、/api/history、/api/events、/api/push（mini-1 回報 hermes 路徑）與首頁。
+提供 /api/now、/api/history、/api/events、/api/push（home-mm-m4pro 回報 hermes 路徑）與首頁。
 只綁 Tailscale IP；沒有驗證，靠 tailnet 隔離。
 """
 from urllib.parse import parse_qs, urlparse
@@ -662,7 +662,7 @@ class H(BaseHTTPRequestHandler):
                 peer.clear(); peer.update(d); peer["ts"] = time.time()
             if prev is not None and prev != d.get("primary_up"):
                 add_event("model", "warn" if not d.get("primary_up") else "good",
-                          "hermes 切到備援 mini-1 27B" if not d.get("primary_up") else "hermes 切回主機A")
+                          "hermes 切到備援 home-mm-m4pro 27B" if not d.get("primary_up") else "hermes 切回主機A")
             self._json({"ok": True}); return
         self._json({"error": "not found"}, 404)
 

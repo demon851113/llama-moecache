@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""mini-1 → 主機A 駕駛台：每 5 秒回報 hermes 走哪台（failover proxy 狀態）與 proxy 最近幾筆。只用標準庫。"""
+"""home-mm-m4pro → 主機A 駕駛台：每 5 秒回報 hermes 走哪台（failover proxy 狀態）與 proxy 最近幾筆。只用標準庫。"""
 import json, os, re, time, urllib.request
 
 PROXY = os.environ.get("LLM_PROXY_URL", "http://127.0.0.1:8090")
@@ -34,7 +34,7 @@ def main():
         except Exception:
             st = {"primary_up": None}
         body = {"primary_up": st.get("primary_up"), "proxy_alive": st.get("primary_up") is not None,
-                "recent": tail_lines(PROXY_LOG), "host": "mini-1"}
+                "recent": tail_lines(PROXY_LOG), "host": "home-mm-m4pro"}
         try:
             req = urllib.request.Request(COCKPIT, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=3).read()
